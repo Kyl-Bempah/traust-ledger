@@ -19,6 +19,7 @@ from conftest import none_alg_jwt
 from traust_ledger._internal.backends.file import FileBackend
 from traust_ledger._internal.integrity import stamp_merkle_metadata, verify_merkle_integrity
 from traust_ledger._internal.integrity.signing import SigningConfig
+from traust_ledger.api.events import FINGERPRINT_ALGO_CURRENT
 from traust_ledger.client import LedgerClient, LedgerError
 from traust_ledger.paths import layer_file_path
 
@@ -211,6 +212,72 @@ class TestCreate:
         """create() does not sign — no events to root."""
         client = _make_client(tmp_path)
         client.create(LAYER_ID)
+
+        reloaded = FileBackend(data_dir=tmp_path).load(layer_file_path(str(tmp_path), LAYER_ID))
+        assert not reloaded["metadata"].get("merkle_root_signature")
+
+
+class TestStampEventIdentities:
+    def test_stamps_missing_identity(self, tmp_path: Path) -> None:
+        """Backfills fingerprint + algo onto events by finding_ref."""
+        events = [
+            {"event_id": "E-1", "finding_ref": "F-1", "disposition": "c"},
+            {"event_id": "E-2", "finding_ref": "F-2", "disposition": "c"},
+        ]
+        _seed_layer(tmp_path, events=events)
+        client = _make_client(tmp_path)
+
+        result = client.stamp_event_identities(LAYER_ID, {"F-1": "fp1", "F-2": "fp2"})
+        assert result["stamped"] == 2
+
+        reloaded = FileBackend(data_dir=tmp_path).load(layer_file_path(str(tmp_path), LAYER_ID))
+        by_ref = {e["finding_ref"]: e for e in reloaded["events"]}
+        assert by_ref["F-1"]["fingerprint"] == "fp1"
+        assert by_ref["F-2"]["fingerprint"] == "fp2"
+        assert by_ref["F-1"]["fingerprint_algo"] == FINGERPRINT_ALGO_CURRENT
+
+    def test_never_overwrites_existing(self, tmp_path: Path) -> None:
+        """Identity is a historical observation — an existing fp is left alone."""
+        events = [{"event_id": "E-1", "finding_ref": "F-1", "fingerprint": "old"}]
+        _seed_layer(tmp_path, events=events)
+        client = _make_client(tmp_path)
+
+        result = client.stamp_event_identities(LAYER_ID, {"F-1": "new"})
+        assert result["stamped"] == 0
+
+        reloaded = FileBackend(data_dir=tmp_path).load(layer_file_path(str(tmp_path), LAYER_ID))
+        assert reloaded["events"][0]["fingerprint"] == "old"
+
+    def test_ignores_unmapped_refs(self, tmp_path: Path) -> None:
+        """An event whose finding_ref is absent from the map is not stamped."""
+        events = [{"event_id": "E-1", "finding_ref": "F-9", "disposition": "c"}]
+        _seed_layer(tmp_path, events=events)
+        client = _make_client(tmp_path)
+
+        result = client.stamp_event_identities(LAYER_ID, {"F-1": "fp1"})
+        assert result["stamped"] == 0
+
+        reloaded = FileBackend(data_dir=tmp_path).load(layer_file_path(str(tmp_path), LAYER_ID))
+        assert "fingerprint" not in reloaded["events"][0]
+
+    def test_finalizes_after_stamp(self, tmp_path: Path) -> None:
+        """Re-stamps a valid Merkle root over the mutated events."""
+        _seed_layer(tmp_path, events=[{"event_id": "E-1", "finding_ref": "F-1"}])
+        client = _make_client(tmp_path)
+
+        client.stamp_event_identities(LAYER_ID, {"F-1": "fp1"})
+
+        after = FileBackend(data_dir=tmp_path).load(layer_file_path(str(tmp_path), LAYER_ID))
+        assert after["metadata"].get("merkle_root"), "should be stamped"
+        findings = verify_merkle_integrity(after)
+        assert not any(f.severity.value >= 2 for f in findings)
+
+    def test_signing_required_raises(self, tmp_path: Path) -> None:
+        """I2: signing_required + no signer raises and writes nothing unsigned."""
+        _seed_layer(tmp_path, events=[{"event_id": "E-1", "finding_ref": "F-1"}])
+        client = _make_client(tmp_path, signing_required=True)
+        with pytest.raises(LedgerError, match="signing"):
+            client.stamp_event_identities(LAYER_ID, {"F-1": "fp1"})
 
         reloaded = FileBackend(data_dir=tmp_path).load(layer_file_path(str(tmp_path), LAYER_ID))
         assert not reloaded["metadata"].get("merkle_root_signature")

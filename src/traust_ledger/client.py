@@ -23,6 +23,7 @@ from traust_contracts.v1.models.layer import LayerActor
 
 from traust_ledger._internal.backends import Backend, create_backend
 from traust_ledger._internal.backends.constants import EMPTY_LAYER
+from traust_ledger._internal.events import attach_identity
 from traust_ledger._internal.integrity.signing import SigningConfig
 from traust_ledger._internal.layer_finalize import finalize_layer
 from traust_ledger._internal.writer import LedgerWriter
@@ -302,6 +303,37 @@ class LedgerClient:
         except ServiceError as exc:
             raise LedgerError(exc.detail) from exc
         return {"merkle_root": merkle_root, "layer_id": layer_id}
+
+    def stamp_event_identities(
+        self,
+        layer_id: str,
+        fingerprints: dict[str, str],
+    ) -> dict[str, Any]:
+        """Backfill event fingerprints from *fingerprints* and re-sign atomically.
+
+        The counterpart to patch_metadata for the event layer: identity is
+        stamped inside the Merkle tree, so the whole thing finalizes in one
+        Backend.mutate — the caller never writes the layer itself. *fingerprints*
+        maps finding_ref -> fingerprint (the harness is the sole producer). Never
+        overwrites an existing fingerprint (identity is a historical
+        observation). Returns the count stamped alongside the new root.
+        """
+        from traust_ledger.errors import ServiceError
+
+        path = layer_file_path(self._config.data_dir, layer_id)
+        config = self._config
+
+        def _stamp_and_finalize(layer: dict) -> tuple[str, int]:
+            stamped = sum(
+                1 for e in layer.get("events") or [] if attach_identity(e, fingerprints)
+            )
+            return finalize_layer(layer, config, layer_id=layer_id), stamped
+
+        try:
+            merkle_root, stamped = self._backend.mutate(path, _stamp_and_finalize)
+        except ServiceError as exc:
+            raise LedgerError(exc.detail) from exc
+        return {"merkle_root": merkle_root, "layer_id": layer_id, "stamped": stamped}
 
     def create(
         self,
