@@ -445,6 +445,15 @@ class LedgerClient:
     def list_layers(self) -> list[str]:
         return self._backend.list_layer_ids()
 
+    def whoami(self) -> LayerActor:
+        """Return the verified actor derived from the caller's token.
+
+        The token is the authority for signer identity — callers that need
+        to attribute a non-event write (e.g. an alias confirmation) resolve
+        it here rather than asserting an identity of their own.
+        """
+        return self._actor()
+
     def actor(self) -> LayerActor:
         """The verified actor this client writes as: token verified, then the
         deployment's employee-directory cross-check applied (if configured).
