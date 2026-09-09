@@ -317,6 +317,16 @@ class LedgerClient:
         self._backend.store(path, base)
         return {"layer_id": layer_id}
 
+    def store(self, layer_id: str, layer: dict[str, Any]) -> dict[str, Any]:
+        """Persist a fully-materialized layer through the backend.
+
+        For callers that build or mutate a whole layer in memory (e.g. the
+        cumulative projection) and sign() separately. Unsigned on its own.
+        """
+        path = layer_file_path(self._config.data_dir, layer_id)
+        self._backend.store(path, layer)
+        return {"layer_id": layer_id}
+
     def verify(self, layer_id: str, *, check_signatures: bool = False) -> dict[str, Any]:
         layer = load_layer(layer_id, self._backend, self._config)
         sig_check = check_signatures or self._config.signing_required
@@ -393,6 +403,43 @@ class LedgerClient:
             note,
             self._writer,
             self._config,
+        )
+
+    def countersign(
+        self,
+        layer_id: str,
+        finding_ref: str,
+        *,
+        rationale: str,
+        recorded_at: str,
+        decision: str | None = None,
+        severity: str | None = None,
+        actor: LayerActor | None = None,
+    ) -> dict[str, Any]:
+        """Record a human countersign/severity event through the gated handler.
+
+        Runs the human-lane gates (two-person, verified-for-FP, rationale,
+        timestamp) and finalizes atomically. Falls back to the token-verified
+        caller when no actor is supplied.
+        """
+        from traust_ledger.handlers.event_handler import submit_event
+        from traust_ledger.models import EventEnvelope
+
+        event: dict[str, Any] = {
+            "layer_id": layer_id,
+            "finding_ref": finding_ref,
+            "rationale": rationale,
+            "recorded_at": recorded_at,
+        }
+        if severity is not None:
+            event["severity"] = severity
+            kind = "severity"
+        else:
+            event["decision"] = decision
+            kind = "countersign"
+        envelope = EventEnvelope(kind=kind, event=event)
+        return self._invoke(
+            submit_event, envelope, actor or self._actor(), self._writer, self._config
         )
 
     def list_layers(self) -> list[str]:

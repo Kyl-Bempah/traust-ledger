@@ -214,3 +214,24 @@ class TestCreate:
 
         reloaded = FileBackend(data_dir=tmp_path).load(layer_file_path(str(tmp_path), LAYER_ID))
         assert not reloaded["metadata"].get("merkle_root_signature")
+
+
+class TestStore:
+    def test_persists_whole_layer(self, tmp_path: Path) -> None:
+        """store() writes a fully-materialized layer through the backend."""
+        client = _make_client(tmp_path)
+        layer = {"events": [{"finding_ref": "F-1"}], "metadata": {"built": True}}
+        result = client.store(LAYER_ID, layer)
+        assert result["layer_id"] == LAYER_ID
+
+        reloaded = FileBackend(data_dir=tmp_path).load(layer_file_path(str(tmp_path), LAYER_ID))
+        assert reloaded["events"] == [{"finding_ref": "F-1"}]
+        assert reloaded["metadata"]["built"] is True
+
+    def test_store_is_unsigned(self, tmp_path: Path) -> None:
+        """store() persists as-is — signing is a separate step."""
+        client = _make_client(tmp_path)
+        client.store(LAYER_ID, {"events": [], "metadata": {}})
+
+        reloaded = FileBackend(data_dir=tmp_path).load(layer_file_path(str(tmp_path), LAYER_ID))
+        assert not reloaded["metadata"].get("merkle_root_signature")
