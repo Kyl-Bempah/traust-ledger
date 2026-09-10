@@ -1,7 +1,12 @@
 # ── Builder stage ───────────────────────────────────────────────────
 # Hardened, RPM-based Python builder image from a public registry
 # (registry.access.redhat.com needs no credentials). Pinned by digest.
-FROM registry.access.redhat.com/hi/python:3.11-builder@sha256:26ff6238c72e67774e57c6f337d834e90e397a6695f2526c02e33c091858d096 AS builder
+#
+# MUST stay on the same Python minor as the runtime stage below: the .venv
+# built here is copied wholesale into the runtime, and native-extension .so
+# files are ABI-pinned per minor while the venv's script shebangs hardcode
+# the builder's interpreter path.
+FROM registry.access.redhat.com/hi/python:3.12-builder@sha256:68c687995a9708e386222507ae1ead717945f39d38c79704aeec448199025ad3 AS builder
 
 ARG UV_VERSION=0.7
 
@@ -74,6 +79,7 @@ FROM registry.access.redhat.com/hi/cosign:latest@sha256:d950d46a8a8307556eaaa1de
 # ── Runtime stage ───────────────────────────────────────────────────
 # Minimal hardened Python runtime. Runs as a non-root user (UID 1001) by
 # default and ships no package manager, so nothing is installed here.
+# Python minor must match the builder stage above (see note there).
 FROM registry.access.redhat.com/hi/python:3.12@sha256:5cebca194f3120fa94bfb09e4c5bc3f77cfddda75e902408bc7e4b448b6fe104 AS runtime
 
 # OCI labels. VERSION and SOURCE_REVISION are supplied by the build.
