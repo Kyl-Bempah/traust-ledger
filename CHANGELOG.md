@@ -2,6 +2,13 @@
 
 All notable changes to traust-ledger are documented here.
 
+## [0.7.1]
+
+### Changed
+
+- Upgraded to `traust-contracts` 0.37.0. Fixes missed upgraded noted in the changelog before.
+- Fix pyproject project groupings.
+
 ## [0.7.0]
 
 ### Changed

@@ -56,7 +56,7 @@ test:
 	uv run pytest tests/ -q -m "not integration"
 
 test-integration:
-	uv run pytest tests/ -q -m integration
+	uv run --extra db pytest tests/ -q -m integration
 
 coverage:
 	uv run pytest tests/ --cov=traust_ledger --cov-report=term-missing -q -m "not integration"
@@ -66,7 +66,7 @@ coverage-html:
 
 coverage-all: mock-idp
 	@echo "Running full coverage (unit + integration)..."
-	uv run pytest tests/ --cov=traust_ledger --cov-report=term-missing --cov-report=html -q
+	uv run --extra db pytest tests/ --cov=traust_ledger --cov-report=term-missing --cov-report=html -q
 	@$(MAKE) mock-idp-stop
 	@echo "Full report: open htmlcov/index.html"
 
