@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from copy import deepcopy
 from pathlib import Path
 from typing import TypeVar
 
@@ -14,6 +15,13 @@ from traust_ledger._internal.backends import Backend, FileBackend
 from traust_ledger._internal.disposition import is_actor_verified
 from traust_ledger._internal.errors import EventIdMismatchError, IdentityUnverifiedError
 from traust_ledger._internal.identity import ALGO_VERSION
+from traust_ledger._internal.restatements import (
+    SIGNED_METADATA_FIELDS,
+    is_destructive_change,
+    is_restatement,
+    merge_delta,
+)
+from traust_ledger.errors import UnexplainedMetadataChangeError
 
 T = TypeVar("T")
 
@@ -175,6 +183,63 @@ class LedgerWriter:
         self.backend.store(layer_path, layer)
         return result
 
+    def append_restatement(
+        self,
+        layer_path: str | Path,
+        event: dict,
+        metadata_updates: dict | Callable[[dict], dict],
+        finalize: Callable[[dict], str] | None,
+        before_append: Callable[[dict], None] | None = None,
+    ) -> tuple[str, str]:
+        """Append a restatement event and apply its metadata effect atomically.
+
+        One lock, one write: split in two, there is a window where metadata has
+        changed and nothing in the log explains it. The snapshot is taken inside
+        the mutator so it compares against what storage holds, not a stale read.
+        """
+        layer_path = Path(layer_path)
+
+        def _apply(layer: dict) -> tuple[str, str]:
+            if before_append is not None:
+                before_append(layer)
+            meta = layer.setdefault("metadata", {})
+            snapshot = {field: deepcopy(meta.get(field)) for field in SIGNED_METADATA_FIELDS}
+            event_id = self._append_one(layer, event)
+            # Callable form lets a caller compute the effect from what storage
+            # actually holds -- a delta cannot be merged before the load.
+            updates = metadata_updates(layer) if callable(metadata_updates) else metadata_updates
+            for key, value in updates.items():
+                if value is None:
+                    meta.pop(key, None)
+                else:
+                    meta[key] = value
+            self.require_restatements_cover_metadata(layer, snapshot, event)
+            merkle_root = finalize(layer) if finalize is not None else ""
+            return event_id, merkle_root
+
+        return self._mutate_layer(layer_path, _apply)
+
+    @staticmethod
+    def require_restatements_cover_metadata(layer: dict, snapshot: dict, event: dict) -> None:
+        """A changed signed-digest field must equal snapshot + the event's delta.
+
+        Computed rather than trusted: the appended restatement says which
+        entries it replaces, so the resulting metadata is derivable. Anything
+        else in the same write -- an extra key, a second field, a value the
+        delta does not mention -- is an unexplained change and fails.
+        """
+        meta = layer.get("metadata") or {}
+        block = event.get("restatement") or {}
+        covered = block.get("target") if is_restatement(event) else None
+        for field in SIGNED_METADATA_FIELDS:
+            if not is_destructive_change(snapshot.get(field), meta.get(field)):
+                continue
+            if field != covered:
+                raise UnexplainedMetadataChangeError(field=field)
+            expected = merge_delta(snapshot.get(field), block.get("after"))
+            if meta.get(field) != expected:
+                raise UnexplainedMetadataChangeError(field=field)
+
     def append_event(
         self,
         layer_path: str | Path,
@@ -329,6 +394,10 @@ class LedgerWriter:
         return event_id
 
     def _prepare_event(self, event: dict) -> str:
+        if is_restatement(event) and (event.get("disposition") or {}):
+            # Write-path copy of the schema rule, so a writer configured without
+            # schema validation still cannot put a restatement into precedence.
+            raise ValueError("a restatement event must carry an empty disposition")
         source_ref = (event.get("source") or {}).get("ref", "")
         finding_ref = event.get("finding_ref", "")
         validity = (event.get("disposition") or {}).get("validity")

@@ -22,6 +22,18 @@ class ServiceConfig(BaseModel):
     # ── Service-layer identity (who is calling the API) ──
     identity_provider: str = "oidc"
 
+    #: Identities permitted to append restatement events. Empty by default, and
+    #: the gate fails closed on empty: a restatement can move signature-bound
+    #: state, so an unconfigured deployment grants that to nobody rather than
+    #: to everybody who can already write.
+    admin_identities: list[str] = []
+
+    #: Independent approvers a restatement must name in ``authority.approved_by``
+    #: (comma-separated), excluding the actor. 0 = the actor's own attribution
+    #: is the authority. Per-deployment: the right threshold depends on whether
+    #: your admin set is two people or twenty.
+    restatement_min_approvers: int = 0
+
     # OIDC token validation (guards API access)
     oidc_issuer: str | None = None
     oidc_audience: str | None = None

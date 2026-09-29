@@ -7,6 +7,8 @@ import json
 from dataclasses import dataclass, replace
 from enum import Enum
 
+from traust_ledger._internal.restatements import SIGNED_METADATA_FIELDS, terminal_value
+
 from .merkle import (
     LEAF_FORMAT_CURRENT,
     compute_merkle_root,
@@ -37,6 +39,7 @@ __all__ = [
     "stamp_merkle_metadata",
     "verify_merkle_integrity",
     "verify_merkle_signature",
+    "verify_restated_metadata",
 ]
 
 
@@ -264,10 +267,55 @@ def stamp_and_sign(layer: dict, *, rekor: bool = False) -> SignAttempt:
     return attempt
 
 
+def verify_restated_metadata(layer: dict) -> list[IntegrityFinding]:
+    """Restated entries must still hold the value their chain last gave them.
+
+    Per key, because the chain carries deltas: an entry nobody restated is
+    genuinely unconstrained here, and one that was restated is pinned to the
+    last value a signed, in-tree event assigned it. A field with no chain is
+    not examined -- there is nothing to compare it to.
+    """
+    meta = layer.get("metadata") or {}
+    events = layer.get("events") or []
+    findings: list[IntegrityFinding] = []
+    for field in SIGNED_METADATA_FIELDS:
+        restated, expected = terminal_value(events, field)
+        if not restated:
+            continue
+        actual = meta.get(field)
+        if isinstance(expected, dict):
+            drifted = sorted(
+                key
+                for key, value in expected.items()
+                if not isinstance(actual, dict) or actual.get(key) != value
+            )
+            if not drifted:
+                continue
+            detail = f"entries {', '.join(drifted)}"
+        elif actual == expected:
+            continue
+        else:
+            detail = "the value"
+        findings.append(
+            IntegrityFinding(
+                severity=Severity.ERROR,
+                message=(
+                    f"metadata.{field}: {detail} do not match the terminal state of "
+                    f"the restatement chain \u2014 rewritten out-of-band after the last "
+                    f"restatement, or a restatement event was removed while its "
+                    f"effect on metadata remained"
+                ),
+            )
+        )
+    return findings
+
+
 def verify_merkle_integrity(layer: dict) -> list[IntegrityFinding]:
     """Verify Merkle metadata matches the events array.
 
     Returns a list of findings (errors and warnings). Empty list = all good.
+
+    Merkle checks read the STORED events, never the restated projection.
     """
     findings: list[IntegrityFinding] = []
     meta = layer.get("metadata") or {}
@@ -412,6 +460,8 @@ def verify_merkle_integrity(layer: dict) -> list[IntegrityFinding]:
                 )
             )
 
+    findings.extend(verify_restated_metadata(layer))
+
     return findings
 
 
@@ -446,6 +496,11 @@ def merkle_signature_payload(meta: dict, fmt: int = SIGNATURE_FORMAT_CURRENT) ->
     tamper-evidence. Binding it closes the last gap between what the ledger
     claims and what a verifier can check: events (via the root), claims (via the
     claim-hash digest), and now the annotated report itself.
+
+    **No format 5 for restatements (2026-09-01).** A restatement is an appended
+    event, so it is inside `merkle_root`, and the values it authorises are
+    already bound by format 4. A new format would re-sign every existing
+    layer to bind data that is bound already.
 
     `fmt` is explicit so the verifier can reconstruct a payload for a layer
     signed under an older format. Signing always uses the current one.

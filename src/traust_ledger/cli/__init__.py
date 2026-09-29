@@ -22,9 +22,34 @@ def backend_from_env() -> tuple[Backend, str]:
     return create_backend(backend_type, **kwargs), data_dir
 
 
+def admin_identities_from_env() -> list[str]:
+    """``LAAS_ADMIN_IDENTITIES`` as a list — comma- or JSON-separated.
+
+    Accepts both because the REST service reads the same variable through
+    pydantic-settings, which wants JSON for a list field, while an operator
+    exporting a shell variable will write a comma-separated string. Parsing
+    only one of those would make the CLI and the service disagree about who is
+    an admin, which is the kind of split-brain an authorisation setting must
+    never have.
+    """
+    raw = (os.environ.get("LAAS_ADMIN_IDENTITIES") or "").strip()
+    if not raw:
+        return []
+    if raw.startswith("["):
+        import json
+
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            return []
+        return [str(v).strip() for v in parsed if str(v).strip()]
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
 def config_from_env(data_dir: str | None = None) -> ServiceConfig:
     """Build ServiceConfig from LAAS_* env vars (no pydantic_settings needed)."""
     return ServiceConfig(
+        admin_identities=admin_identities_from_env(),
         backend_type=os.environ.get("LAAS_BACKEND_TYPE", "file"),
         data_dir=data_dir or os.environ.get("LAAS_DATA_DIR", "/var/lib/laas/data"),
         database_url=os.environ.get("LAAS_DATABASE_URL"),

@@ -19,7 +19,7 @@ matching, and preparing data before submission.
 | Module | Exports | SDK migration candidate |
 |--------|---------|------------------------|
 | `traust_ledger.api.identity` | `fingerprint`, `canon_path`, `canon_repo`, `primary_cwe`, `ALGO_VERSION` | Yes |
-| `traust_ledger.api.events` | `compute_event_id`, `compute_claim_hash`, `aliases_from_events`, `findings_from_events`, `attach_identity`, `make_alias_event` | Yes |
+| `traust_ledger.api.events` | `compute_event_id`, `compute_claim_hash`, `aliases_from_events`, `findings_from_events`, `attach_identity`, `make_alias_event`, `apply_restatements`, `terminal_value` | Yes |
 | `traust_ledger.api.disposition` | `derive_disposition`, `is_actor_verified`, `event_class` | Yes |
 | `traust_ledger.api.integrity` | `verify_merkle_integrity`, `verify_merkle_signature`, `stamp_merkle_metadata`, `IntegrityFinding`, `Severity` | No |
 | `traust_ledger.api.reports` | `report_sha256`, `check_report_digest`, `check_artifact_digests` | No |
@@ -46,6 +46,7 @@ identity onto the actor. `LedgerWriter` is internal and NOT importable.
 | `ledger resolve` | Resolve a needs_review item |
 | `ledger fingerprint` | Stamp identity on a report (in-place write) |
 | `ledger verify` | Merkle integrity check |
+| `ledger restate` | Administratively restate signature-bound metadata (admin-gated append) |
 | `ledger migrate` | Administratively copy validated historical layers into normalized storage |
 | `ledger materialize` | Populate SQL projection |
 | `ledger query` | findings / events / layers |
@@ -59,6 +60,13 @@ If it **computes or reads** → importable from SDK-tier modules.
 ### Database integrity rules
 
 - `events` is append-only: existing payloads must be an exact prefix; only suffix inserts.
+- **Restatements cover METADATA only.** Overwriting signature-bound metadata
+  (`claim_hashes`, `audit_report_sha256`, `artifact_digests`) requires a write that also
+  appends a restatement recording the prior value, the actor and an authorising ticket;
+  `LedgerWriter` enforces it and `patch_metadata` refuses the overwrite. First writes
+  and per-key additions pass freely. Event content is NOT correctable — supersede it
+  with a later event. Never add a read-time overlay: the v1→v2 normaliser is the one
+  read-time transform.
 - Append-only triggers are shipped by `traust-contracts` in the DDL itself. Ledger's
   guard installation is idempotent (`IF NOT EXISTS` / `DROP + CREATE`).
 - Never add event `UPDATE`, `DELETE`, replacement, or truncation paths.

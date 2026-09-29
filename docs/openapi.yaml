@@ -87,6 +87,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorDetail'
+  /v1/ledger/layers/{layer_id}/restate:
+    post:
+      summary: Post Restatement
+      operationId: post_restatement_v1_ledger_layers__layer_id__restate_post
+      parameters:
+      - name: layer_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Layer Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestatementRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestatementResponse'
+        '401':
+          description: Missing or invalid authentication credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '403':
+          description: Caller is not a configured ledger admin
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '422':
+          description: 'Invalid restatement: missing authority, no-op change, stale
+            `before`, or a metadata change no restatement covers'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
   /v1/ledger/layers/{layer_id}/initialize:
     post:
       summary: Post Initialize Layer
@@ -1025,6 +1068,52 @@ components:
       - resolved
       - key
       title: ResolveResponse
+    RestatementRequest:
+      properties:
+        restatement:
+          additionalProperties: true
+          type: object
+          title: Restatement
+        rationale:
+          type: string
+          title: Rationale
+        recorded_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Recorded At
+        finding_ref:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Finding Ref
+      type: object
+      required:
+      - restatement
+      - rationale
+      title: RestatementRequest
+    RestatementResponse:
+      properties:
+        event_id:
+          type: string
+          title: Event Id
+        layer_id:
+          type: string
+          title: Layer Id
+        target:
+          type: string
+          title: Target
+        merkle_root:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Merkle Root
+      type: object
+      required:
+      - event_id
+      - layer_id
+      - target
+      title: RestatementResponse
     Severity:
       type: string
       enum:

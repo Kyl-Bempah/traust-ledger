@@ -129,9 +129,15 @@ def aliases_from_events(events) -> dict[str, dict]:
 
 def findings_from_events(events) -> dict[str, dict]:
     """Project `{finding_id: finding}` from event-carried findings (B1).
-    Caller must prefer baseline over event-carried copies."""
+    Caller must prefer baseline over event-carried copies.
+
+    Restatements are applied first: an event-carried finding is claim data like
+    any other, so a restatement that fixes a wrong severity or location must be
+    visible here, not only in the disposition projection."""
+    from traust_ledger._internal.restatements import apply_restatements
+
     out: dict[str, dict] = {}
-    for e in events or []:
+    for e in apply_restatements(list(events or [])):
         f = e.get("finding")
         if not isinstance(f, dict):
             continue

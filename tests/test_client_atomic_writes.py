@@ -200,22 +200,28 @@ class TestPatchMetadata:
         assert "updated" in reloaded["metadata"]
 
     def test_deep_merges_dicts(self, tmp_path: Path) -> None:
-        """patch_metadata deep-merges dict values."""
+        """patch_metadata deep-merges dict values.
+
+        Uses external_refs rather than claim_hashes: the signature-bound
+        digests are no longer reachable from this path at all (see
+        TestPatchMetadataSignedFields), so asserting the merge on one of them
+        would be asserting a behaviour that must not exist.
+        """
         _seed_layer(tmp_path, events=[{"event_id": "E-1", "disposition": "c"}])
         client = _make_client(tmp_path)
-        client.patch_metadata(LAYER_ID, {"claim_hashes": {"a": "a" * 64}})
-        client.patch_metadata(LAYER_ID, {"claim_hashes": {"b": "b" * 64}})
+        client.patch_metadata(LAYER_ID, {"external_refs": {"a": [{"system": "jira", "id": "A-1"}]}})
+        client.patch_metadata(LAYER_ID, {"external_refs": {"b": [{"system": "jira", "id": "B-2"}]}})
 
         reloaded = FileBackend(data_dir=tmp_path).load(layer_file_path(str(tmp_path), LAYER_ID))
-        hashes = reloaded["metadata"]["claim_hashes"]
-        assert hashes == {"a": "a" * 64, "b": "b" * 64}
+        refs = reloaded["metadata"]["external_refs"]
+        assert set(refs) == {"a", "b"}
 
     def test_finalizes_after_patch(self, tmp_path: Path) -> None:
         """patch_metadata re-stamps merkle root after metadata change."""
         _seed_layer(tmp_path, events=[{"event_id": "E-1", "disposition": "c"}])
         client = _make_client(tmp_path)
 
-        client.patch_metadata(LAYER_ID, {"artifact_digests": {"r.json": "a" * 64}})
+        client.patch_metadata(LAYER_ID, {"audit_report_ref": "object://moved"})
 
         after = FileBackend(data_dir=tmp_path).load(layer_file_path(str(tmp_path), LAYER_ID))
         assert after["metadata"].get("merkle_root"), "should be stamped"

@@ -26,6 +26,7 @@ All three converge on shared handlers (`traust_ledger.handlers`).
 | Doc | Covers |
 |---|---|
 | [`docs/ledger-model.md`](docs/ledger-model.md) | Layers, events, Merkle integrity, the write contract |
+| [`docs/restatement.md`](docs/restatement.md) | Fixing signed data: what can and cannot be restated, and why |
 | [`docs/finding-identity.md`](docs/finding-identity.md) | The fingerprint: the recipe, what it excludes, `ALGO_VERSION`, strict mode, what it is *not* |
 | [`docs/service-identity.md`](docs/service-identity.md) | Pluggable authn providers (OIDC, API key), endpoint protection, testing with mock IdP |
 | [`docs/auth.md`](docs/auth.md) | Identity vs integrity split, Merkle-root signing |

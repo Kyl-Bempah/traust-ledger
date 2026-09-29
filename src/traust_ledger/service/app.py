@@ -87,7 +87,13 @@ def create_app(
     from fastapi.requests import Request
     from fastapi.responses import JSONResponse
 
-    from traust_ledger.errors import AuthError, InternalError, NotFoundError, ServiceError
+    from traust_ledger.errors import (
+        AuthError,
+        ForbiddenError,
+        InternalError,
+        NotFoundError,
+        ServiceError,
+    )
 
     @app.exception_handler(LayerStorageError)
     async def _storage_error(request: Request, exc: LayerStorageError) -> JSONResponse:
@@ -98,6 +104,9 @@ def create_app(
         if isinstance(exc, AuthError):
             status_code = 401
             headers = {"WWW-Authenticate": "Bearer"}
+        elif isinstance(exc, ForbiddenError):
+            status_code = 403
+            headers = None
         elif isinstance(exc, NotFoundError):
             status_code = 404
             headers = None
