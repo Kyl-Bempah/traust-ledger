@@ -15,6 +15,7 @@ import base64
 import json
 import os
 from collections.abc import Callable
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any, TypeVar
 
@@ -292,13 +293,34 @@ class LedgerClient:
         path = layer_file_path(self._config.data_dir, layer_id)
         config = self._config
 
+        from traust_ledger._internal.restatements import (
+            SIGNED_METADATA_FIELDS,
+            is_destructive_change,
+        )
+
         def _patch_and_finalize(layer: dict) -> str:
             meta = layer.setdefault("metadata", {})
+            prior = {field: deepcopy(meta.get(field)) for field in SIGNED_METADATA_FIELDS}
             for key, value in updates.items():
                 if isinstance(value, dict) and isinstance(meta.get(key), dict):
                     meta[key].update(value)
                 else:
                     meta[key] = value
+            # First writes and additions pass; an OVERWRITE of signed-bound
+            # state must go through restate(), which records the prior value,
+            # the actor and the authorising ticket. Checked under the lock,
+            # against what storage holds.
+            overwritten = [
+                field
+                for field in SIGNED_METADATA_FIELDS
+                if is_destructive_change(prior[field], meta.get(field))
+            ]
+            if overwritten:
+                raise LedgerError(
+                    f"{', '.join(overwritten)} already holds a value inside the "
+                    f"signature — use restate() to overwrite it; patch_metadata "
+                    f"records neither the prior value, the actor, nor a reason"
+                )
             meta["updated"] = datetime.now(UTC).isoformat(timespec="seconds")
             return finalize_layer(layer, config, layer_id=layer_id)
 
@@ -476,6 +498,59 @@ class LedgerClient:
         envelope = EventEnvelope(kind=kind, event=event)
         return self._invoke(
             submit_event, envelope, actor or self._actor(), self._writer, self._config
+        )
+
+    def restate(
+        self,
+        layer_id: str,
+        restatement: dict[str, Any],
+        *,
+        rationale: str,
+        recorded_at: str | None = None,
+        finding_ref: str | None = None,
+        actor: LayerActor | None = None,
+    ) -> dict[str, Any]:
+        """Append an administrative restatement and apply its effect atomically.
+
+        The only in-process path that may change a signature-bound digest — it
+        records the prior value, the actor and the ticket; a patch records none.
+        """
+        from traust_ledger.handlers.restatement_handler import apply_restatement
+
+        block = dict(restatement)
+        if finding_ref:
+            block["finding_ref"] = finding_ref
+        return self._invoke(
+            apply_restatement,
+            layer_id,
+            block,
+            rationale,
+            actor or self._actor(),
+            recorded_at or datetime.now(UTC).isoformat(),
+            self._writer,
+            self._config,
+        )
+
+    def restate_many(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        actor: LayerActor | None = None,
+    ) -> dict[str, Any]:
+        """Apply many restatements in one call, reporting per item.
+
+        Each item is ``{layer, rationale, target, before, after, authority, …}``.
+        Gated individually and atomic per layer, so a refusal is reported and
+        the rest still apply — the same contract as ``ledger restate --from``.
+        """
+        from traust_ledger.handlers.restatement_handler import apply_restatement_batch
+
+        return self._invoke(
+            apply_restatement_batch,
+            items,
+            actor or self._actor(),
+            self._writer,
+            self._config,
         )
 
     def list_layers(self) -> list[str]:

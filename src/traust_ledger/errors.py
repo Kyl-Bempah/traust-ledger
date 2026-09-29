@@ -38,6 +38,15 @@ class AuthError(ServiceError):
     message = "authentication required"
 
 
+class ForbiddenError(ServiceError):
+    """Authenticated but not permitted — 403, not 401.
+
+    Telling a caller with a valid token to re-authenticate cannot help.
+    """
+
+    message = "{detail}"
+
+
 class NotFoundError(ServiceError):
     """Requested resource does not exist."""
 
@@ -168,13 +177,73 @@ class EventIdMismatchError(ServiceError):
     message = "event_id mismatch: supplied '{supplied}' != canonical '{canonical}'"
 
 
+class NotAnAdminError(ForbiddenError):
+    message = (
+        "{identity} is not a ledger administrator — restatements rewrite "
+        "signature-bound data and are restricted to the configured admin set"
+    )
+
+
+class RestatementAuthorityError(ServiceError):
+    message = "{detail}"
+
+
+class NothingToRestateError(ServiceError):
+    """The target field holds no value, so there is nothing to restate."""
+
+    message = (
+        "metadata.{target} holds no value — there is nothing to restate. "
+        "Setting it the first time destroys no prior value and needs no ticket; "
+        "write it through the ordinary path instead"
+    )
+
+
+class RetiredValueRestatedError(ServiceError):
+    """The chain already moved away from this value."""
+
+    message = (
+        "restatement of {target} restores a value the chain already retired ({keys}) — "
+        "reversing an earlier restatement is its own decision and needs its own "
+        "reason, not a rollback to a superseded value"
+    )
+
+
+class InsufficientApproversError(ForbiddenError):
+    message = (
+        "this deployment requires {required} independent approver(s) on a "
+        "restatement; found {found} in authority.approved_by"
+    )
+
+
+class StaleRestatementError(ServiceError):
+    """``before`` disagrees with what is stored — the concurrent-write guard."""
+
+    message = (
+        "restatement for {target} does not match the stored value — "
+        "`before` says {before!r}, the layer holds {actual!r}; "
+        "re-read the layer and recompute the restatement"
+    )
+
+
+class UnexplainedMetadataChangeError(ServiceError):
+    """A signature-bound metadata field changed with nothing to explain it."""
+
+    message = (
+        "metadata.{field} changed without a restatement event recording it — "
+        "the value is inside the signature, so rewriting it silently destroys "
+        "the only evidence of what it was; append a restatement instead"
+    )
+
+
 __all__ = [
     "AuthError",
     "CorruptStoredEventError",
     "DecisionVerdictConflictError",
     "EventIdMismatchError",
+    "ForbiddenError",
     "IdentityRequiredError",
     "IdentityUnverifiedError",
+    "InsufficientApproversError",
     "InternalError",
     "InvalidAuthError",
     "InvalidEpochError",
@@ -188,13 +257,19 @@ __all__ = [
     "MissingLayerIdError",
     "MissingRecordedAtEventError",
     "MissingSeverityError",
+    "NotAnAdminError",
     "NotFoundError",
+    "NothingToRestateError",
     "RationaleTooShortError",
+    "RestatementAuthorityError",
+    "RetiredValueRestatedError",
     "ServiceError",
     "SigningFailedError",
     "SigningRequiredError",
+    "StaleRestatementError",
     "TimestampFutureError",
     "TwoPersonViolatedError",
+    "UnexplainedMetadataChangeError",
     "UnknownDecisionError",
     "ValidationError",
 ]

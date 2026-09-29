@@ -9,6 +9,7 @@ from .ledger import (
     stamp_merkle_metadata,
     verify_merkle_integrity,
     verify_merkle_signature,
+    verify_restated_metadata,
 )
 from .merkle import (
     canonical_event_bytes,
@@ -62,4 +63,5 @@ __all__ = [
     "verify_inclusion",
     "verify_merkle_integrity",
     "verify_merkle_signature",
+    "verify_restated_metadata",
 ]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 from traust_contracts.v1.enums import Validity
@@ -21,10 +22,16 @@ from traust_ledger.constants import (
 from traust_ledger.service.errors import (
     IdentityRequiredError,
     IdentityUnverifiedError,
+    InsufficientApproversError,
     InvalidEpochError,
     MachineDispositionError,
+    NotAnAdminError,
+    NothingToRestateError,
     RationaleTooShortError,
+    RestatementAuthorityError,
+    RetiredValueRestatedError,
     ServiceError,
+    StaleRestatementError,
     TimestampFutureError,
     TwoPersonViolatedError,
 )
@@ -111,6 +118,166 @@ def require_verified_for_false_positive(actor: LayerActor, validity: str) -> Non
         IdentityUnverifiedError(),
         actor_identity=actor.identity,
     )
+
+
+def require_admin(actor: LayerActor, admin_identities: Sequence[str]) -> None:
+    """Only a verified human on the configured admin list may restate.
+
+    Fails closed on an empty admin set.
+    """
+    identity = (actor.identity or "").strip().lower()
+    if actor.kind != ACTOR_KIND_HUMAN or not identity:
+        _reject_gate("admin", IdentityRequiredError(), actor_identity=actor.identity)
+    if not _is_verified(actor):
+        _reject_gate("admin", IdentityUnverifiedError(), actor_identity=actor.identity)
+    allowed = {a.strip().lower() for a in admin_identities if a and a.strip()}
+    if identity not in allowed:
+        _reject_gate(
+            "admin",
+            NotAnAdminError(identity=actor.identity),
+            actor_identity=actor.identity,
+            configured_admins=len(allowed),
+        )
+
+
+def require_restatement_authority(block: dict[str, object]) -> None:
+    """Semantic checks the schema cannot make: authority present, change real.
+
+    A no-op restatement records an authorised change to a field that did not
+    move — the shape of a cover story.
+    """
+    target = block.get("target")
+    if not target:
+        _reject_gate("restatement_authority", RestatementAuthorityError(detail="target required"))
+    authority = block.get("authority")
+    ticket = (authority or {}).get("ticket") if isinstance(authority, dict) else None
+    if not (isinstance(ticket, str) and ticket.strip()):
+        _reject_gate(
+            "restatement_authority",
+            RestatementAuthorityError(
+                detail="authority.ticket is required — an unattributed restatement "
+                "is indistinguishable from the rewrite this path exists to prevent"
+            ),
+        )
+    if "after" not in block:
+        _reject_gate("restatement_authority", RestatementAuthorityError(detail="after is required"))
+    if "before" in block and block["before"] == block["after"]:
+        _reject_gate(
+            "restatement_authority",
+            RestatementAuthorityError(
+                detail=f"restatement for {target} changes nothing — before == after"
+            ),
+        )
+
+
+def require_something_to_restate(block: dict[str, object], actual: object) -> None:
+    """Every entry a restatement replaces must already hold a value.
+
+    Setting something for the first time destroys nothing, so it needs no
+    ticket and belongs on the ordinary write path. Checked per key for map
+    targets: adding a newly baselined finding is an addition, not a
+    restatement, even when other keys exist.
+    """
+    target = str(block.get("target"))
+    before = block.get("before")
+    if isinstance(before, dict):
+        if not isinstance(actual, dict):
+            _reject_gate("nothing_to_restate", NothingToRestateError(target=target))
+            return
+        absent = sorted(k for k in before if k not in actual)
+        if absent:
+            _reject_gate(
+                "nothing_to_restate",
+                NothingToRestateError(target=f"{target}[{', '.join(absent)}]"),
+            )
+        return
+    if actual in (None, {}, ""):
+        _reject_gate("nothing_to_restate", NothingToRestateError(target=target))
+
+
+def require_fresh_restatement(block: dict[str, object], actual: object) -> None:
+    """``before`` must match what the layer holds, entry by entry.
+
+    Otherwise two admins restating from the same read both succeed and the log
+    records both as applied.
+    """
+    before = block.get("before")
+    if isinstance(before, dict) and isinstance(actual, dict):
+        stale = {k: v for k, v in before.items() if actual.get(k) != v}
+        if stale:
+            _reject_gate(
+                "restatement_freshness",
+                StaleRestatementError(
+                    target=block.get("target"),
+                    before=stale,
+                    actual={k: actual.get(k) for k in stale},
+                ),
+            )
+        return
+    if before != actual:
+        _reject_gate(
+            "restatement_freshness",
+            StaleRestatementError(target=block.get("target"), before=before, actual=actual),
+        )
+
+
+def require_monotonic_restatement(block: dict[str, object], events: object) -> None:
+    """A restatement may not restore a value the chain already retired.
+
+    Two reasons. Reversing an earlier decision is itself a decision and needs
+    its own stated reason, not a silent rollback to a value someone already
+    moved away from. And without this an A->B->A->B loop passes every other
+    gate forever: each step's ``before`` matches what is stored, so an actor
+    with admin credentials can append events without bound, re-hashing and
+    re-signing the layer every time.
+    """
+    from traust_ledger._internal.restatements import retired_values
+
+    target = str(block.get("target"))
+    after = block.get("after")
+    if isinstance(after, dict):
+        replayed = {
+            key: value
+            for key, value in after.items()
+            if value in retired_values(events, target, key)
+        }
+        if replayed:
+            _reject_gate(
+                "restatement_monotonic",
+                RetiredValueRestatedError(target=target, keys=", ".join(sorted(replayed))),
+            )
+        return
+    if after in retired_values(events, target, None):
+        _reject_gate(
+            "restatement_monotonic",
+            RetiredValueRestatedError(target=target, keys="(whole value)"),
+        )
+
+
+def require_restatement_approvers(
+    block: dict[str, object], actor: LayerActor, minimum: int
+) -> None:
+    """Deployment-configured approval threshold for a restatement.
+
+    Zero (the default) means the admin's own attribution is the authority.
+    Higher values require named approvers who are not the actor -- the same
+    shape as the two-person rule, applied to metadata authority instead of a
+    false-positive reassertion.
+    """
+    if minimum <= 0:
+        return
+    authority = block.get("authority")
+    raw = (authority or {}).get("approved_by") if isinstance(authority, dict) else None
+    approvers = (
+        [a.strip().lower() for a in raw.split(",") if a.strip()] if isinstance(raw, str) else []
+    )
+    independent = {a for a in approvers if a != (actor.identity or "").strip().lower()}
+    if len(independent) < minimum:
+        _reject_gate(
+            "restatement_approvers",
+            InsufficientApproversError(required=minimum, found=len(independent)),
+            actor_identity=actor.identity,
+        )
 
 
 def require_rationale_length(rationale: str) -> None:

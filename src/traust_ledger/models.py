@@ -20,6 +20,20 @@ class SubmitResponse(BaseModel):
     queue_added: int = 0
 
 
+class RestatementRequest(BaseModel):
+    restatement: dict[str, object]
+    rationale: str
+    recorded_at: str | None = None
+    finding_ref: str | None = None
+
+
+class RestatementResponse(BaseModel):
+    event_id: str
+    layer_id: str
+    target: str
+    merkle_root: str | None = None
+
+
 class VerifyFinding(BaseModel):
     severity: str
     message: str

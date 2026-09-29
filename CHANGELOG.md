@@ -2,6 +2,86 @@
 
 All notable changes to traust-ledger are documented here.
 
+## [0.8.0]
+
+### Added
+
+- **Administrative restatement events** — `ledger restate`,
+  `POST /v1/ledger/layers/{layer_id}/restate`, and `LedgerClient.restate()`.
+  A restatement is an APPEND that records the prior value, the actor and an
+  authorising ticket, then applies the restated value and re-signs. It covers
+  the signature-bound metadata digests (`claim_hashes`, `audit_report_sha256`,
+  `artifact_digests`) and `finding_aliases`.
+  - Named restatement, not correction: `corrected` is already taken by
+    `Validity.CORRECTED` (a finding-level claim revision), and
+    classifier-disposition plan step 15 moves `corrected` into the same future
+    `event_type` enum. `amend` was rejected because in git it means rewrite
+    history — the exact operation this forbids.
+- `LedgerWriter.append_restatement()` enforces the invariant the whole feature
+  rests on: a signature-bound metadata field may only change in a write that
+  also appends a restatement covering it (`UnexplainedMetadataChangeError`).
+- `verify_merkle_integrity` now checks restated metadata against the terminal
+  state of its restatement chain — an out-of-band rewrite after a restatement
+  is an ERROR rather than an unexplained digest mismatch a human must
+  adjudicate.
+- SDK-tier `apply_restatements`, `restatements`, `terminal_value`
+  (`traust_ledger.api.events`). Reading a restated projection needs no
+  credentials; writing a restatement does.
+- **Restatements are deltas.** `before`/`after` carry only the entries being
+  changed; the writer merges them over stored metadata under the layer lock. A
+  one-entry restatement costs the same on a 10-finding layer as on a 500-finding
+  one — event size tracks the change, not the layer. Verification and the
+  freshness guard are per key, so an entry nobody restated stays unconstrained.
+- **Monotonic chain** (`RetiredValueRestatedError`): a restatement may not
+  restore a value the chain already retired. Reversing an earlier restatement is
+  its own decision and needs its own reason — and without this, `A → B → A → B`
+  passed every gate, letting an actor with admin credentials append events
+  without bound, re-hashing and re-signing on every write.
+- `ServiceConfig.restatement_min_approvers` (`LAAS_RESTATEMENT_MIN_APPROVERS`):
+  independent approvers a restatement must name in `authority.approved_by`,
+  excluding the actor. 0 by default — the threshold is a deployment question.
+- Bulk restatement via one shared handler (`apply_restatement_batch`):
+  `ledger restate --from batch.json` and `LedgerClient.restate_many(items)`. No
+  separate plan step. Deliberately not exposed over REST — one request cannot be
+  atomic across N layers, so a batch endpoint would imply a guarantee the
+  storage model does not give. Each item is gated individually and each write is atomic
+  on its own layer, so a refused item is reported without stranding the rest;
+  exit code is non-zero if any failed.
+- Removed `finding_aliases` as a target: a `rebaseline` event already records a
+  rename inside the Merkle-covered event stream, so the metadata table is a
+  rebuildable projection rather than authority.
+- Restating a field or entry that holds no value is refused (`NothingToRestateError`) —
+  a first entry destroys no prior value, so it belongs on the ordinary write
+  path rather than being filed as an administrative act.
+- `ServiceConfig.admin_identities` / `LAAS_ADMIN_IDENTITIES` (comma- or
+  JSON-separated). The admin gate fails CLOSED on an empty set.
+- `ForbiddenError` → HTTP 403, so a valid token without admin rights is not
+  told to re-authenticate.
+
+### Changed
+
+- **`LedgerClient.patch_metadata()` refuses to OVERWRITE signature-bound
+  digests.** This was the hole: it would rewrite `claim_hashes` /
+  `audit_report_sha256` / `artifact_digests` and re-sign with no record of the
+  prior value, the actor, or a reason. First writes and per-key additions still
+  pass — pinning a claim hash for a newly baselined finding destroys no
+  evidence and is routine harness work. Overwrites go through `restate()`.
+- **Event content is not restatable, by design.** Events are immutable and a
+  wrong determination is superseded by appending a later one, which latest-wins
+  precedence already resolves. A read-time overlay would be a second read-time
+  transform competing with the v1→v2 normaliser, with no defined ordering
+  between them (classifier-disposition plan R1, D13). `resolve_layer_findings`
+  and `findings_from_events` drop restatement events from the projection so
+  they never reach the precedence engine; nothing else about event reads
+  changes.
+- Upgraded to `traust-contracts` 0.40.0 for the delta-form `restatement` vocabulary.
+
+### Notes
+
+- **No new signature format.** A restatement is inside `merkle_root`, and the
+  values it authorises are already bound by format 4. Appending one moves the
+  root, drops the stale signature, and re-signs through the ordinary path.
+
 ## [0.7.1]
 
 ### Changed

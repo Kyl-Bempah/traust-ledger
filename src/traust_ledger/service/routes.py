@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -16,6 +17,7 @@ from traust_ledger.handlers.fingerprint_handler import compute_fingerprints
 from traust_ledger.handlers.initialize_handler import initialize_layer
 from traust_ledger.handlers.layer_handler import load_layer
 from traust_ledger.handlers.resolve_handler import resolve_review_item
+from traust_ledger.handlers.restatement_handler import apply_restatement
 from traust_ledger.handlers.sign_handler import sign_layer
 from traust_ledger.handlers.stamp_handler import stamp_event_identities
 from traust_ledger.handlers.submit_handler import submit_batch
@@ -30,6 +32,8 @@ from traust_ledger.models import (
     FingerprintResponse,
     LayerListResponse,
     ResolveResponse,
+    RestatementRequest,
+    RestatementResponse,
     StampRequest,
     StampResponse,
     SubmitResponse,
@@ -111,6 +115,41 @@ async def resolve_review(
         _config(request),
     )
     return ResolveResponse(**result)
+
+
+@router.post(
+    "/v1/ledger/layers/{layer_id}/restate",
+    response_model=RestatementResponse,
+    responses={
+        401: {"model": ErrorDetail, "description": "Missing or invalid authentication credentials"},
+        403: {"model": ErrorDetail, "description": "Caller is not a configured ledger admin"},
+        422: {
+            "model": ErrorDetail,
+            "description": (
+                "Invalid restatement: missing authority, no-op change, stale `before`, "
+                "or a metadata change no restatement covers"
+            ),
+        },
+    },
+)
+async def post_restatement(
+    layer_id: str,
+    body: RestatementRequest,
+    request: Request,
+    actor: Annotated[LayerActor, Depends(resolve_actor)],
+) -> RestatementResponse:
+    block = dict(body.restatement)
+    if body.finding_ref:
+        block["finding_ref"] = body.finding_ref
+    return apply_restatement(
+        layer_id,
+        block,
+        body.rationale,
+        actor,
+        body.recorded_at or datetime.now(UTC).isoformat(),
+        _writer(request),
+        _config(request),
+    )
 
 
 @router.post("/v1/ledger/layers/{layer_id}/initialize")

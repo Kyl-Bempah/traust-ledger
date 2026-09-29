@@ -22,6 +22,7 @@ from traust_contracts.v1.models.report import ResolutionCounts, ValidityCounts
 
 from traust_ledger._internal.disposition import derive_disposition
 from traust_ledger._internal.events import aliases_from_events
+from traust_ledger._internal.restatements import apply_restatements
 
 # ─── Domain models ────────────────────────────────────────────────────────────
 # These are return types of resolve_layer_findings — shared across api, CLI,
@@ -47,7 +48,11 @@ def resolve_layer_findings(layer: dict) -> tuple[list[FindingDisposition], Findi
     Pure computation — deterministic given the layer contents.
     No backend, no config, no auth.
     """
-    events = layer.get("events", [])
+    # The restated view, not the stored one: a restatement event is not evidence
+    # and must never reach the precedence engine, and an event some restatement
+    # overlays must be read with the overlay applied. The stored events are
+    # untouched — the Merkle root still covers exactly what was written.
+    events = apply_restatements(layer.get("events", []))
     now = datetime.now(UTC).isoformat()
 
     aliases = dict((layer.get("metadata") or {}).get("finding_aliases") or {})

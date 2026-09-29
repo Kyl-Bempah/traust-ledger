@@ -15,6 +15,7 @@ from traust_ledger._internal.integrity import (
     Severity,
     verify_merkle_integrity,
     verify_merkle_signature,
+    verify_restated_metadata,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "Severity",
     "verify_merkle_integrity",
     "verify_merkle_signature",
+    "verify_restated_metadata",
 ]
