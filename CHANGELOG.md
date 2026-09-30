@@ -7,8 +7,7 @@ All notable changes to traust-ledger are documented here.
 ### Changed
 
 - Upgraded to `traust-contracts` 0.44.0 (typed enum registry, `retired`
-  stage). No ledger code, schema or OpenAPI change. Pinned by commit
-  (`65b16f8`) until contracts tags `v0.44.0`.
+  stage). No ledger code, schema or OpenAPI change.
 
 ## [0.8.0]
 
