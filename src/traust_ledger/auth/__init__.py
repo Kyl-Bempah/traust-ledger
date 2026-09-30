@@ -9,7 +9,7 @@ Public API:
   IdentityClaimsError   — token verified but identity mapping failed
   AuthResolutionError   — raised when no credential can be resolved
   CredentialStore       — protocol for credential persistence backends
-  verifier_for_token    — build a verifier from an existing token's issuer
+  verifier_for_token    — build a verifier for a bare token (local keys or configured OIDC)
   build_verifier_config — resolve verifier config from env/args (REST callers)
   DeviceCodeFlow        — interactive token acquisition (CLI)
   ClientCredentialsFlow — service-account (machine) token acquisition

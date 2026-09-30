@@ -20,15 +20,14 @@ from traust_contracts.v1.models.layer import LayerActor
 
 from traust_ledger._internal.events.builders import build_restatement_event
 from traust_ledger._internal.gates import (
-    require_admin,
     require_fresh_restatement,
     require_monotonic_restatement,
     require_rationale_length,
-    require_restatement_approvers,
     require_restatement_authority,
     require_something_to_restate,
     require_timestamp_bounds,
     require_valid_epoch,
+    require_verified_human,
 )
 from traust_ledger._internal.layer_finalize import finalize_layer, require_signing_configured
 from traust_ledger._internal.restatements import LAYER_SCOPE_REF, merge_delta
@@ -50,13 +49,23 @@ def apply_restatement(
     writer: LedgerWriter,
     config: ServiceConfig,
 ) -> RestatementResponse:
-    """Append one restatement event and apply its effect, atomically."""
+    """Append one restatement event and apply its effect, atomically.
+
+    Integrity and attribution rules only (a verified human authors it; the
+    change is ticketed, real, fresh and monotonic): every one holds whoever
+    calls. *Who may* restate is
+    authorization, enforced at the REST boundary
+    (``service.auth.authorize_restatement``) where the operator, not the
+    caller, owns the admin list. In-process callers (CLI, ``LedgerClient``)
+    have no such boundary — they own their environment and their storage — so
+    a check here would be self-granted. What they get instead is the record:
+    prior value, actor, ticket and rationale, inside the signed tree.
+    """
     require_signing_configured(config)
-    require_admin(actor, config.admin_identities)
+    require_verified_human(actor, "restatement_actor")
     require_rationale_length(rationale)
     require_timestamp_bounds(recorded_at)
     require_restatement_authority(block)
-    require_restatement_approvers(block, actor, config.restatement_min_approvers)
 
     target = block.get("target")
     if target not in set(RestatementTarget):

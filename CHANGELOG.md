@@ -2,6 +2,36 @@
 
 All notable changes to traust-ledger are documented here.
 
+## [0.8.2]
+
+### Security
+
+- **SDK/CLI OIDC verification no longer trusts the token's own issuer.**
+  `verifier_for_token` used to discover signing keys from whatever `iss` the
+  unverified token named, so a token could choose who vouched for it. OIDC
+  tokens are now verified only against the configured `LEDGER_OIDC_JWKS_URL` /
+  `LEDGER_OIDC_ISSUER` (or a stored login's recorded issuer). A token from any
+  other issuer fails verification, and with no provider configured a non-local
+  token is refused. The message now says so, replacing the misleading "OIDC
+  token resolved but no OIDC provider configured".
+- **Restatement authorization moved to the REST boundary.** The admin list
+  (`LAAS_ADMIN_IDENTITIES`) and approver threshold
+  (`LAAS_RESTATEMENT_MIN_APPROVERS`) are enforced by
+  `POST /v1/ledger/layers/{id}/restate` (still 403 for non-admins), where the
+  operator owns them. The shared handler no longer checks them:
+  - The CLI read them from the caller's own environment, so any caller could
+    grant itself.
+  - `LedgerClient` never loaded them at all, so `restate()` always refused.
+  - `ledger restate` and `LedgerClient.restate()` now apply every integrity rule
+    and record the actor, ticket and rationale in the signed history.
+  - A restatement must still be authored by a verified human on every entry
+    point; machine and service-account identities are refused.
+
+### Removed
+
+- `traust_ledger.cli.admin_identities_from_env`; the CLI no longer reads
+  authorization settings.
+
 ## [0.8.1]
 
 ### Changed
@@ -97,6 +127,18 @@ All notable changes to traust-ledger are documented here.
 - Fix pyproject project groupings.
 
 ## [0.7.0]
+
+### Breaking (added retroactively in 0.8.2)
+
+- `LedgerClient.sign()`, `patch_metadata()` and `stamp_event_identities()` now
+  verify the caller's token before writing. A placeholder string such as
+  `token="test-token"` is refused. Use a real local token
+  (`LEDGER_LOCAL_IDENTITY` / `ledger auth local`) or a configured OIDC
+  provider.
+- `LedgerClient.create()` requires a verified actor and a complete layer shell
+  (`audit_report`, `repository`, `created`, `harness_version`).
+- `LedgerClient.store()` always raises. Replacing a whole layer is no longer
+  possible through the SDK.
 
 ### Changed
 

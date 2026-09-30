@@ -45,6 +45,23 @@ You can only *replace* a value this way. Recording something for the first time
 isn't a restatement — nothing is being replaced, so it needs no ticket and no
 admin rights.
 
+## Who can restate
+
+A restatement is always authored by a verified human: a service account or other
+machine identity is refused on every entry point.
+
+*Which* humans may restate is decided by the REST service, which checks the
+caller against `LAAS_ADMIN_IDENTITIES` (and `LAAS_RESTATEMENT_MIN_APPROVERS`).
+Those settings belong to whoever runs the service, and callers can't change
+them.
+
+`ledger restate` and `LedgerClient.restate()` don't check the admin list. A
+local caller sets its own environment and holds the storage credentials, so a
+list it reads for itself would stop no one. What they do instead is record who
+restated, the ticket, and the rationale, inside the signed history. To restrict
+who may restate, route writes through the REST service and don't hand storage
+credentials to the people or pods you want to restrict.
+
 ## What you can't, and what to do instead
 
 | You want to… | Why not | Instead |
@@ -100,8 +117,9 @@ the layer exactly as it was.
 
 | Rejected because | What it means |
 |---|---|
-| You're not an administrator | restatements are limited to a configured list of people. An empty list means nobody. |
-| Not enough approvers | your deployment requires other people named in `approved_by` |
+| You're not an administrator (REST) | the service limits restatements to a configured list of people. An empty list means nobody. |
+| Not enough approvers (REST) | the service requires other people named in `approved_by` |
+| Not a verified human | restatements record a human decision; machine and unverified identities can't author one |
 | No ticket | a restatement has to say what authorised it |
 | Nothing actually changed | `before` and `after` are the same |
 | Nothing to replace | that value was never recorded — just record it normally |
@@ -134,5 +152,5 @@ the layer's history, so the layer is re-signed as part of the same write.
 
 | Setting | Default | What it controls |
 |---|---|---|
-| `LAAS_ADMIN_IDENTITIES` | empty | who may restate. Empty means nobody can. |
-| `LAAS_RESTATEMENT_MIN_APPROVERS` | `0` | how many other people must be named in `approved_by` |
+| `LAAS_ADMIN_IDENTITIES` | empty | REST service only: who may restate. Empty means nobody can. |
+| `LAAS_RESTATEMENT_MIN_APPROVERS` | `0` | REST service only: how many other people must be named in `approved_by` |

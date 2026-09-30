@@ -868,3 +868,70 @@ class TestResolveAuthPairing:
         assert cred.source == "env:LEDGER_TOKEN_PATH"
         actor = cred.verify()
         assert actor.identity == "path@test.com"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# OIDC issuer pinning — a bare token never chooses who vouches for it
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestOidcIssuerPinning:
+    TRUSTED = "https://sso.example.com/realms/test"
+    ROGUE = "https://rogue.example.net"
+
+    @pytest.fixture(autouse=True)
+    def _clean_env(self, monkeypatch):
+        for var in ("LEDGER_OIDC_JWKS_URL", "LEDGER_OIDC_ISSUER", "LEDGER_OIDC_AUDIENCE"):
+            monkeypatch.delenv(var, raising=False)
+
+    @staticmethod
+    def _no_discovery():
+        return mock.patch(
+            "traust_ledger.auth.config.discover_oidc",
+            side_effect=AssertionError("discovery must not follow the token's iss"),
+        )
+
+    def test_unconfigured_refuses_without_discovering_the_tokens_issuer(self, rsa_keypair):
+        from traust_ledger.auth.config import AuthResolutionError, verifier_for_token
+
+        token = _make_oidc_jwt(rsa_keypair, issuer=self.ROGUE)
+        with self._no_discovery(), pytest.raises(AuthResolutionError) as exc:
+            verifier_for_token(token)
+        assert "no OIDC provider is configured" in str(exc.value)
+
+    def test_non_jwt_gets_the_actionable_message(self):
+        from traust_ledger.auth.config import AuthResolutionError, verifier_for_token
+
+        with pytest.raises(AuthResolutionError, match="not a local-issuer JWT"):
+            verifier_for_token("test-token")
+
+    def test_discovery_uses_the_configured_issuer_only(self, rsa_keypair, monkeypatch):
+        from traust_ledger.auth.config import verifier_for_token
+        from traust_ledger.auth.discovery import OIDCMetadata
+
+        monkeypatch.setenv("LEDGER_OIDC_ISSUER", self.TRUSTED)
+        token = _make_oidc_jwt(rsa_keypair, issuer=self.ROGUE)
+        meta = OIDCMetadata(
+            issuer=self.TRUSTED, jwks_uri=f"{self.TRUSTED}/jwks", token_endpoint="t"
+        )
+        with mock.patch("traust_ledger.auth.config.discover_oidc", return_value=meta) as disc:
+            verifier = verifier_for_token(token)
+        disc.assert_called_once_with(self.TRUSTED)
+        assert verifier._config.issuer == self.TRUSTED
+
+    def test_token_from_another_issuer_fails_verification(
+        self, httpserver: HTTPServer, rsa_keypair, jwks_json, monkeypatch
+    ):
+        """Same signing key, different `iss`: the configured issuer is enforced."""
+        from traust_ledger.auth.config import verifier_for_token
+
+        httpserver.expect_request("/jwks").respond_with_json(jwks_json)
+        monkeypatch.setenv("LEDGER_OIDC_JWKS_URL", httpserver.url_for("/jwks"))
+        monkeypatch.setenv("LEDGER_OIDC_ISSUER", self.TRUSTED)
+
+        trusted = _make_oidc_jwt(rsa_keypair, issuer=self.TRUSTED)
+        rogue = _make_oidc_jwt(rsa_keypair, issuer=self.ROGUE)
+        with self._no_discovery():
+            assert verifier_for_token(trusted).verify(trusted).identity == "alice@example.com"
+            with pytest.raises(TokenVerificationError):
+                verifier_for_token(rogue).verify(rogue)

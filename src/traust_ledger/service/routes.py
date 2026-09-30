@@ -40,7 +40,7 @@ from traust_ledger.models import (
     VerifyResponse,
 )
 from traust_ledger.paths import layer_file_path
-from traust_ledger.service.auth import require_identity, resolve_actor
+from traust_ledger.service.auth import authorize_restatement, require_identity, resolve_actor
 from traust_ledger.service.errors import LayerNotFoundError
 from traust_ledger.service.models import ErrorDetail, HealthResponse, ResolveRequest
 from traust_ledger.service.route_constants import (
@@ -139,6 +139,7 @@ async def post_restatement(
     actor: Annotated[LayerActor, Depends(resolve_actor)],
 ) -> RestatementResponse:
     block = dict(body.restatement)
+    authorize_restatement(actor, block, _config(request))
     if body.finding_ref:
         block["finding_ref"] = body.finding_ref
     return apply_restatement(
