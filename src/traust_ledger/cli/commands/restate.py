@@ -111,12 +111,15 @@ def cmd_restate(args: argparse.Namespace) -> int:
 def register_restate_parser(subparsers: argparse._SubParsersAction) -> None:
     p = subparsers.add_parser(
         "restate",
-        help="Append an administrative restatement event (admin only)",
+        help="Append an administrative restatement event (records actor and ticket)",
         description=(
             "Restate signature-bound metadata a layer already committed to. An "
-            "APPEND: the prior entries are recorded on the event, the root moves, "
-            "the layer re-signs. --before/--after carry only the entries that "
-            "change, not the whole map. Use --from to apply many in one run."
+            "APPEND: the prior entries, your verified identity, the ticket and the "
+            "rationale are recorded on the event, the root moves, the layer "
+            "re-signs. --before/--after carry only the entries that change, not "
+            "the whole map. Use --from to apply many in one run. The admin list "
+            "(LAAS_ADMIN_IDENTITIES) is enforced by the REST service, not here: "
+            "a local caller controls its own environment."
         ),
     )
     p.add_argument("--layer", help="Target layer ID")

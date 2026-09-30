@@ -42,6 +42,7 @@ from traust_ledger.errors import (
 )
 from traust_ledger.handlers.restatement_handler import apply_restatement
 from traust_ledger.paths import layer_file_path
+from traust_ledger.service.auth import authorize_restatement
 
 FIXTURE = json.loads(
     (Path(__file__).resolve().parent / "fixtures" / "restatement-lifecycle.json").read_text()
@@ -67,8 +68,10 @@ class Harness:
         return self.backend.load(self.path)
 
     def restate(self, spec: dict, actor: LayerActor = ADMIN, **override):
+        """Drive a restatement the way the REST service does: authorize, then apply."""
         block = {k: v for k, v in spec.items() if k not in ("stage", "rationale")}
         block.update(override)
+        authorize_restatement(actor, block, self.config)
         return apply_restatement(
             self.layer_id,
             block,

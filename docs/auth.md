@@ -41,6 +41,13 @@ config at startup via [`IdentityPort`](service-identity.md).
 | OIDC | `LEDGER_OIDC_JWKS_URL` or discovery from `LEDGER_OIDC_ISSUER` | Configured issuer |
 | Local | `~/.config/traust-ledger/local-jwks.json` | `local` |
 
+A token's own `iss` claim only picks between these two. It never picks which
+OIDC provider is trusted: keys are fetched only from the configured
+`LEDGER_OIDC_JWKS_URL` / `LEDGER_OIDC_ISSUER` (or, for a stored login, the
+issuer recorded by `ledger auth login`). A token naming any other issuer fails
+verification. If no provider is configured, any token that isn't `iss=local` is
+refused with a message saying so.
+
 ## Actor derivation
 
 | Claims | Kind |

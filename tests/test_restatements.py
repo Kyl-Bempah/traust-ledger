@@ -52,6 +52,7 @@ from traust_ledger.errors import (
 )
 from traust_ledger.handlers.restatement_handler import apply_restatement
 from traust_ledger.paths import layer_file_path
+from traust_ledger.service.auth import authorize_restatement
 
 ADMIN = "admin@example.com"
 LAYER_ID = "repo-correct"
@@ -236,30 +237,23 @@ class TestGates:
         writer, config = _seed(tmp_path, claim_hashes={"FIND-1": "a" * 64})
         apply_restatement(LAYER_ID, _block(**over), RATIONALE, actor, NOW, writer, config)
 
-    def test_non_admin_is_refused(self, tmp_path: Path) -> None:
-        with pytest.raises(NotAnAdminError):
-            self._apply(tmp_path, USER_ACTOR)
+    def test_handler_does_not_authorize(self, tmp_path: Path) -> None:
+        """Who may restate is decided at the REST boundary. In-process callers own
+        their config, so the handler records the actor instead of checking a
+        list that caller could edit."""
+        self._apply(tmp_path, USER_ACTOR)
+        (event,) = _load(tmp_path)["events"]
+        assert event["source"]["actor"]["identity"] == USER_ACTOR.identity
 
     def test_machine_is_refused(self, tmp_path: Path) -> None:
+        """Attribution, not permission: a restatement is a human decision."""
         with pytest.raises(ServiceError):
             self._apply(tmp_path, MACHINE_ACTOR)
 
-    def test_unverified_admin_is_refused(self, tmp_path: Path) -> None:
+    def test_unverified_actor_is_refused(self, tmp_path: Path) -> None:
         unverified = LayerActor(kind="human", identity=ADMIN, identity_verified=False)
         with pytest.raises(ServiceError):
             self._apply(tmp_path, unverified)
-
-    def test_empty_admin_set_fails_closed(self, tmp_path: Path) -> None:
-        """An unconfigured deployment grants the power to nobody, not everybody."""
-        writer, config = _seed(tmp_path, claim_hashes={"FIND-1": "a" * 64})
-        config = config.model_copy(update={"admin_identities": []})
-        with pytest.raises(NotAnAdminError):
-            apply_restatement(LAYER_ID, _block(), RATIONALE, ADMIN_ACTOR, NOW, writer, config)
-
-    def test_admin_match_is_case_insensitive(self, tmp_path: Path) -> None:
-        writer, config = _seed(tmp_path, claim_hashes={"FIND-1": "a" * 64})
-        shouty = LayerActor(kind="human", identity=ADMIN.upper(), identity_verified=True)
-        apply_restatement(LAYER_ID, _block(), RATIONALE, shouty, NOW, writer, config)
 
     def test_ticket_is_required(self, tmp_path: Path) -> None:
         with pytest.raises(RestatementAuthorityError, match=r"authority\.ticket"):
@@ -292,6 +286,29 @@ class TestGates:
         writer, config = _seed(tmp_path, claim_hashes={"FIND-1": "a" * 64})
         with pytest.raises(ServiceError):
             apply_restatement(LAYER_ID, _block(), "short", ADMIN_ACTOR, NOW, writer, config)
+
+
+class TestServiceAuthorization:
+    """``authorize_restatement`` — the REST boundary's admin/approver check."""
+
+    def test_non_admin_is_refused(self) -> None:
+        config = ServiceConfig(admin_identities=[ADMIN])
+        with pytest.raises(NotAnAdminError):
+            authorize_restatement(USER_ACTOR, _block(), config)
+
+    def test_empty_admin_set_fails_closed(self) -> None:
+        """An unconfigured deployment grants the power to nobody, not everybody."""
+        with pytest.raises(NotAnAdminError):
+            authorize_restatement(ADMIN_ACTOR, _block(), ServiceConfig(admin_identities=[]))
+
+    def test_admin_match_is_case_insensitive(self) -> None:
+        shouty = LayerActor(kind="human", identity=ADMIN.upper(), identity_verified=True)
+        authorize_restatement(shouty, _block(), ServiceConfig(admin_identities=[ADMIN]))
+
+    def test_machine_admin_is_refused(self) -> None:
+        machine = LayerActor(kind="machine", identity=ADMIN, identity_verified=True)
+        with pytest.raises(ServiceError):
+            authorize_restatement(machine, _block(), ServiceConfig(admin_identities=[ADMIN]))
 
 
 # ── Write path ───────────────────────────────────────────────────────────────

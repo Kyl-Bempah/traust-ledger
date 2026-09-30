@@ -1,10 +1,11 @@
 """One restatement, three doors: REST, CLI, and LedgerClient.
 
 AGENTS.md requires every write operation to work identically through all three
-entry points. For restatements that is not a nicety: the admin gate, the
-freshness guard and the metadata effect all live in one handler precisely so a
-caller cannot pick the door with the weakest checks. These tests assert both
-halves — the same success shape, and the same refusal from each.
+entry points. The integrity rules (verified human author, ticket, freshness,
+monotonic chain) and the metadata effect live in one handler, so no door has
+weaker integrity. Authorization is the exception, by design: the admin list is
+enforced only at the REST boundary, because a CLI or SDK caller owns its own
+environment and could grant itself. Those doors record the actor instead.
 
 Storage coverage lives alongside: the same restatement is driven through the
 file backend, SQLite, and (when configured) PostgreSQL, because the append-only
@@ -143,7 +144,6 @@ class TestCli:
         FileBackend().initialize(tmp_path / f"{LAYER_ID}.json", _shell_with_claims())
         monkeypatch.setenv("LAAS_BACKEND_TYPE", BACKEND_TYPE_FILE)
         monkeypatch.setenv("LAAS_DATA_DIR", str(tmp_path))
-        monkeypatch.setenv("LAAS_ADMIN_IDENTITIES", ADMIN)
         monkeypatch.setattr("traust_ledger.cli.commands.restate.require_cli_auth", lambda: False)
         monkeypatch.setattr(
             "traust_ledger.cli.commands.restate.require_verified_actor",
@@ -183,11 +183,17 @@ class TestCli:
         assert layer["metadata"]["claim_hashes"] == AFTER
         assert json.loads(capsys.readouterr().out)["target"] == "claim_hashes"
 
-    def test_non_admin_exits_nonzero(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_cli_does_not_authorize_and_records_the_actor(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An admin list the caller sets for itself is not authorization, so the
+        CLI ignores it and records who restated."""
         self._prepare(tmp_path, monkeypatch, OUTSIDER)
-        assert main(self._argv(tmp_path)) != 0
+        monkeypatch.setenv("LAAS_ADMIN_IDENTITIES", ADMIN)
+        assert main(self._argv(tmp_path)) == 0
         layer = FileBackend().load(tmp_path / f"{LAYER_ID}.json")
-        assert layer["metadata"]["claim_hashes"] == BEFORE
+        assert layer["metadata"]["claim_hashes"] == AFTER
+        assert layer["events"][0]["source"]["actor"]["identity"] == OUTSIDER
 
     def test_at_file_and_inline_json_agree(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -200,18 +206,14 @@ class TestCli:
         path.write_text(json.dumps(AFTER), encoding="utf-8")
         assert _load_json_arg(f"@{path}") == _load_json_arg(json.dumps(AFTER))
 
-    def test_admin_env_accepts_comma_and_json_forms(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The CLI and the REST service read the same variable through
-        different parsers; disagreeing about who is an admin is the one
-        split-brain an authorisation setting must never have."""
-        from traust_ledger.cli import admin_identities_from_env
+    def test_cli_config_ignores_authorization_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from traust_ledger.cli import config_from_env
 
-        monkeypatch.setenv("LAAS_ADMIN_IDENTITIES", "a@x.com, b@x.com")
-        assert admin_identities_from_env() == ["a@x.com", "b@x.com"]
-        monkeypatch.setenv("LAAS_ADMIN_IDENTITIES", '["a@x.com", "b@x.com"]')
-        assert admin_identities_from_env() == ["a@x.com", "b@x.com"]
-        monkeypatch.delenv("LAAS_ADMIN_IDENTITIES")
-        assert admin_identities_from_env() == []
+        monkeypatch.setenv("LAAS_ADMIN_IDENTITIES", "a@x.com")
+        monkeypatch.setenv("LAAS_RESTATEMENT_MIN_APPROVERS", "2")
+        config = config_from_env()
+        assert config.admin_identities == []
+        assert config.restatement_min_approvers == 0
 
 
 # ── LedgerClient ─────────────────────────────────────────────────────────────
@@ -236,7 +238,6 @@ def _client(tmp_path: Path, identity: str = ADMIN):
         data_dir=str(tmp_path),
         signing_config=SigningConfig(method="none"),
     )
-    client._config = client._config.model_copy(update={"admin_identities": [ADMIN]})
     return client
 
 
@@ -247,11 +248,32 @@ class TestLedgerClient:
         layer = FileBackend().load(tmp_path / f"{LAYER_ID}.json")
         assert layer["metadata"]["claim_hashes"] == AFTER
 
-    def test_non_admin_raises_ledger_error(self, tmp_path: Path) -> None:
-        from traust_ledger.client import LedgerError
+    def test_sdk_does_not_authorize_and_records_the_actor(self, tmp_path: Path) -> None:
+        _client(tmp_path, OUTSIDER).restate(LAYER_ID, _block(), rationale=RATIONALE)
+        layer = FileBackend().load(tmp_path / f"{LAYER_ID}.json")
+        assert layer["events"][0]["source"]["actor"]["identity"] == OUTSIDER
 
-        with pytest.raises(LedgerError, match="not a ledger administrator"):
-            _client(tmp_path, OUTSIDER).restate(LAYER_ID, _block(), rationale=RATIONALE)
+    def test_machine_actor_is_refused(self, tmp_path: Path) -> None:
+        """A service-account token maps to a machine actor; a restatement is a
+        human decision, so it is refused on every door."""
+        from traust_ledger._internal.integrity.signing import SigningConfig
+        from traust_ledger.client import LedgerClient, LedgerError
+
+        class _MachineVerifier:
+            def verify(self, token: str) -> LayerActor:
+                return LayerActor(kind="machine", identity="sci/pod", identity_verified=True)
+
+        FileBackend().initialize(tmp_path / f"{LAYER_ID}.json", _shell_with_claims())
+        client = LedgerClient(
+            token="stub",
+            verifier=_MachineVerifier(),
+            data_dir=str(tmp_path),
+            signing_config=SigningConfig(method="none"),
+        )
+        with pytest.raises(LedgerError):
+            client.restate(LAYER_ID, _block(), rationale=RATIONALE)
+        layer = FileBackend().load(tmp_path / f"{LAYER_ID}.json")
+        assert layer["events"] == []
 
 
 # ── Storage backends ─────────────────────────────────────────────────────────
@@ -262,7 +284,7 @@ def _exercise_restatement(backend, data_dir: Path, layer_id: str) -> dict:
     path = layer_file_path(str(data_dir), layer_id)
     backend.initialize(path, _shell_with_claims())
     writer = LedgerWriter(backend=backend)
-    config = ServiceConfig(data_dir=str(data_dir), admin_identities=[ADMIN])
+    config = ServiceConfig(data_dir=str(data_dir))
     apply_restatement(
         layer_id,
         _block(),

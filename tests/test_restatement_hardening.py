@@ -45,6 +45,7 @@ from traust_ledger.errors import (
 )
 from traust_ledger.handlers.restatement_handler import apply_restatement
 from traust_ledger.paths import layer_file_path
+from traust_ledger.service.auth import authorize_restatement
 
 ADMIN_ID = "admin@example.com"
 ADMIN = LayerActor(kind="human", identity=ADMIN_ID, identity_verified=True)
@@ -295,6 +296,12 @@ class TestPerKeyGuards:
 # ── Approver threshold ───────────────────────────────────────────────────────
 
 
+def _authorized_restate(writer, config, block: dict, *, actor: LayerActor = ADMIN):
+    """The REST path: the approver threshold is enforced at the boundary."""
+    authorize_restatement(actor, block, config)
+    return _restate(writer, config, block, actor=actor)
+
+
 class TestApprovers:
     def test_default_needs_no_approver(self, tmp_path: Path) -> None:
         claims = _claims(1)
@@ -309,13 +316,13 @@ class TestApprovers:
         writer, config = _seed(tmp_path, claims=claims, approvers=1)
         block = _block({"FIND-0000": claims["FIND-0000"]}, {"FIND-0000": "b" * 64})
         with pytest.raises(InsufficientApproversError):
-            _restate(writer, config, block)
+            _authorized_restate(writer, config, block)
         approved = _block(
             {"FIND-0000": claims["FIND-0000"]},
             {"FIND-0000": "b" * 64},
             authority={"ticket": "SEC-1", "approved_by": "lead@example.com"},
         )
-        _restate(writer, config, approved)
+        _authorized_restate(writer, config, approved)
         assert len(_load(tmp_path)["events"]) == 1
 
     def test_the_actor_cannot_approve_themselves(self, tmp_path: Path) -> None:
@@ -327,7 +334,7 @@ class TestApprovers:
             authority={"ticket": "SEC-1", "approved_by": ADMIN_ID.upper()},
         )
         with pytest.raises(InsufficientApproversError):
-            _restate(writer, config, block)
+            _authorized_restate(writer, config, block)
 
     def test_two_approvers_must_be_distinct(self, tmp_path: Path) -> None:
         claims = _claims(1)
@@ -338,13 +345,13 @@ class TestApprovers:
             authority={"ticket": "SEC-1", "approved_by": "lead@example.com,lead@example.com"},
         )
         with pytest.raises(InsufficientApproversError):
-            _restate(writer, config, same_twice)
+            _authorized_restate(writer, config, same_twice)
         two = _block(
             {"FIND-0000": claims["FIND-0000"]},
             {"FIND-0000": "b" * 64},
             authority={"ticket": "SEC-1", "approved_by": "lead@example.com, sec@example.com"},
         )
-        _restate(writer, config, two)
+        _authorized_restate(writer, config, two)
         assert len(_load(tmp_path)["events"]) == 1
 
 
@@ -468,7 +475,7 @@ class TestBulkParity:
     the storage model does not give.
     """
 
-    def _client(self, tmp_path: Path, layers: dict, approvers: int = 0):
+    def _client(self, tmp_path: Path, layers: dict):
         from traust_ledger._internal.integrity.signing import SigningConfig
         from traust_ledger.client import LedgerClient
 
@@ -493,16 +500,12 @@ class TestBulkParity:
             def verify(self, token: str) -> LayerActor:
                 return ADMIN
 
-        client = LedgerClient(
+        return LedgerClient(
             token="stub",
             verifier=_Verifier(),
             data_dir=str(tmp_path),
             signing_config=SigningConfig(method="none"),
         )
-        client._config = client._config.model_copy(
-            update={"admin_identities": [ADMIN_ID], "restatement_min_approvers": approvers}
-        )
-        return client
 
     def _item(self, layer_id: str, before: dict, after: dict) -> dict:
         return {
@@ -546,12 +549,12 @@ class TestBulkParity:
         """A surface that skipped a gate would be the whole reason the handler
         is shared."""
         layers = {"repo-a": {"FIND-0001": "a" * 64}}
-        client = self._client(tmp_path, layers, approvers=1)
-        report = client.restate_many(
-            [self._item("repo-a", {"FIND-0001": "a" * 64}, {"FIND-0001": "f" * 64})]
-        )
+        client = self._client(tmp_path, layers)
+        unticketed = self._item("repo-a", {"FIND-0001": "a" * 64}, {"FIND-0001": "f" * 64})
+        unticketed["authority"] = {}
+        report = client.restate_many([unticketed])
         assert report["applied"] == []
-        assert "approver" in report["failed"][0]["error"]
+        assert "ticket" in report["failed"][0]["error"]
 
     def test_rest_has_no_batch_route(self) -> None:
         from traust_ledger.service import routes

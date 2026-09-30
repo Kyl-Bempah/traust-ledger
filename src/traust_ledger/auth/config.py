@@ -200,11 +200,13 @@ def build_verifier_config(
 
 
 def verifier_for_token(token: str) -> TokenVerifier:
-    """Peek ``iss`` to build a matching single-source verifier.
+    """Build a single-source verifier for a token that arrived without one.
 
-    Used for env-sourced tokens where the credential metadata isn't
-    available. The peek is unverified — it only selects the key material,
-    and a wrong selection fails at signature check.
+    The unverified ``iss`` peek only chooses between local keys and the
+    configured OIDC provider. It never chooses *which* OIDC provider: a token
+    that could name its own issuer would pick who vouches for it, so an OIDC
+    token is checked against ``LEDGER_OIDC_JWKS_URL`` / ``LEDGER_OIDC_ISSUER``
+    or refused.
 
     Prefer ``resolve_auth()`` when possible — it pairs token + verifier
     in one step. This is the fallback for callers who already have a token
@@ -215,17 +217,20 @@ def verifier_for_token(token: str) -> TokenVerifier:
     except pyjwt.InvalidTokenError:
         claims = {}
 
-    issuer = claims.get("iss")
-    if issuer == LOCAL_ISSUER:
+    if claims.get("iss") == LOCAL_ISSUER:
         return _build_local_verifier()
-    return _build_oidc_verifier(issuer=issuer)
+    return _build_oidc_verifier()
 
 
 def _verifier_for_issuer(issuer: str | None) -> TokenVerifier:
-    """Build a single-source verifier for a known issuer."""
+    """Build a verifier for a stored credential's issuer.
+
+    ``issuer`` comes from credential metadata written by ``ledger auth login``
+    against the configured provider — configuration, not a token claim.
+    """
     if issuer == LOCAL_ISSUER:
         return _build_local_verifier()
-    return _build_oidc_verifier(issuer=issuer)
+    return _build_oidc_verifier(trusted_issuer=issuer)
 
 
 def _build_local_verifier(
@@ -241,10 +246,15 @@ def _build_local_verifier(
     return TokenVerifier(vc)
 
 
-def _build_oidc_verifier(issuer: str | None = None) -> TokenVerifier:
-    """Build a verifier that only checks OIDC keys."""
+def _build_oidc_verifier(trusted_issuer: str | None = None) -> TokenVerifier:
+    """Build a verifier that only checks keys of a configured OIDC provider.
+
+    ``trusted_issuer`` must come from configuration or stored-credential
+    metadata, never from the token being verified. Discovery is only ever
+    performed against a configured issuer.
+    """
     jwks_url = os.environ.get("LEDGER_OIDC_JWKS_URL")
-    oidc_issuer = issuer or os.environ.get("LEDGER_OIDC_ISSUER")
+    oidc_issuer = trusted_issuer or os.environ.get("LEDGER_OIDC_ISSUER")
     audience = os.environ.get("LEDGER_OIDC_AUDIENCE")
 
     if not jwks_url and oidc_issuer:
@@ -253,8 +263,9 @@ def _build_oidc_verifier(issuer: str | None = None) -> TokenVerifier:
 
     if not jwks_url:
         raise AuthResolutionError(
-            "OIDC token resolved but no OIDC provider configured — "
-            "set LEDGER_OIDC_JWKS_URL or LEDGER_OIDC_ISSUER"
+            "token is not a local-issuer JWT and no OIDC provider is configured — "
+            "set LEDGER_OIDC_ISSUER or LEDGER_OIDC_JWKS_URL, or use local auth "
+            "(`ledger auth local`)"
         )
 
     return TokenVerifier(

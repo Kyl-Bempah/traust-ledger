@@ -120,16 +120,29 @@ def require_verified_for_false_positive(actor: LayerActor, validity: str) -> Non
     )
 
 
+def require_verified_human(actor: LayerActor, gate: str) -> None:
+    """The actor is a named, verified human.
+
+    An attribution rule, not a permission: a restatement records a human
+    decision, so a machine or anonymous actor cannot be its author whoever runs
+    the write.
+    """
+    identity = (actor.identity or "").strip()
+    if actor.kind != ACTOR_KIND_HUMAN or not identity:
+        _reject_gate(gate, IdentityRequiredError(), actor_identity=actor.identity)
+    if not _is_verified(actor):
+        _reject_gate(gate, IdentityUnverifiedError(), actor_identity=actor.identity)
+
+
 def require_admin(actor: LayerActor, admin_identities: Sequence[str]) -> None:
     """Only a verified human on the configured admin list may restate.
 
+    Authorization: only meaningful where the caller cannot edit the list, so
+    it is applied at the REST boundary (``service.auth``), never in a handler.
     Fails closed on an empty admin set.
     """
+    require_verified_human(actor, "admin")
     identity = (actor.identity or "").strip().lower()
-    if actor.kind != ACTOR_KIND_HUMAN or not identity:
-        _reject_gate("admin", IdentityRequiredError(), actor_identity=actor.identity)
-    if not _is_verified(actor):
-        _reject_gate("admin", IdentityUnverifiedError(), actor_identity=actor.identity)
     allowed = {a.strip().lower() for a in admin_identities if a and a.strip()}
     if identity not in allowed:
         _reject_gate(
