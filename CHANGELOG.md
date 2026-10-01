@@ -2,6 +2,15 @@
 
 All notable changes to traust-ledger are documented here.
 
+## [0.8.3]
+
+### Changed
+
+- traust-contracts v0.45.0, which adds the OWASP Risk Rating Methodology
+  `risk_rating` to threats. The ledger doesn't read threat models; the bump
+  keeps one contracts ref across the release train so traust-engine and
+  traust can pin v0.45.0.
+
 ## [0.8.2]
 
 ### Security
