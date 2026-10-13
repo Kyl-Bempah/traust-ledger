@@ -8,6 +8,7 @@ to the ``ActorResolver`` on ``app.state``.
 from __future__ import annotations
 
 from fastapi import Request
+from fastapi.concurrency import run_in_threadpool
 from traust_contracts.v1.models.layer import LayerActor
 
 from traust_ledger._internal.gates import require_admin, require_restatement_approvers
@@ -15,15 +16,19 @@ from traust_ledger.config import ServiceConfig
 
 
 async def resolve_actor(request: Request) -> LayerActor:
-    """Resolve request identity via the app's ActorResolver."""
+    """Resolve request identity via the app's ActorResolver.
+
+    The resolver is synchronous (JWT crypto, JWKS fetches); it must never
+    run on the event loop or /healthz starves under load.
+    """
     resolver = request.app.state.resolver
-    return resolver.resolve(request)
+    return await run_in_threadpool(resolver.resolve, request)
 
 
 async def require_identity(request: Request) -> None:
     """Gate: verify identity is valid but don't inject the actor."""
     resolver = request.app.state.resolver
-    resolver.resolve(request)
+    await run_in_threadpool(resolver.resolve, request)
 
 
 def authorize_restatement(actor: LayerActor, block: dict, config: ServiceConfig) -> None:

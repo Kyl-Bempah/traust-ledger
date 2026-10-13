@@ -8,9 +8,12 @@ import json
 import logging
 import os
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TypeVar
+
+from traust_ledger._internal.query import Filter, LayerEntry
+from traust_ledger.constants.keys import LAYER_FILE_SUFFIX
 
 from .constants import (
     EMPTY_LAYER,
@@ -21,7 +24,7 @@ from .constants import (
     NEWLINE,
     TEMP_FILE_SUFFIX,
 )
-from .errors import LayerConflictError, LayerNotInitializedError
+from .errors import LayerConflictError, LayerNotInitializedError, LayerStorageError
 from .validation import validate_layer
 
 T = TypeVar("T")
@@ -38,6 +41,64 @@ class FileBackend:
         if product_repo_id is not None:
             return []
         return [(layer_id, None) for layer_id in self.list_layer_ids()]
+
+    def query_layers(self, filters: Sequence[Filter], *, include_reviews: bool) -> list[LayerEntry]:
+        """Registry-driven listing over the data directory.
+
+        Column filters evaluate against what a file-backed layer can offer
+        (its ID stem; it records no product_repo owner); other column filters
+        are rejected rather than silently ignored. JSON-item filters and
+        include_reviews select layers with matching queue entries.
+        """
+        from traust_ledger._internal.query import (
+            FILE_SUPPORTED_COLUMN_FILTERS,
+            FILTER_REGISTRY,
+            ColumnFilterDef,
+            item_matches,
+            json_item_filters,
+        )
+
+        for f in filters:
+            definition = FILTER_REGISTRY[f.key]
+            if (
+                isinstance(definition, ColumnFilterDef)
+                and f.key not in FILE_SUPPORTED_COLUMN_FILTERS
+            ):
+                raise LayerStorageError(f"filter {f.key!r} is not supported by the file backend")
+
+        json_filters = json_item_filters(filters)
+        wants_reviews = include_reviews or bool(json_filters)
+        entries: list[LayerEntry] = []
+        for layer_id in self.list_layer_ids():
+            if not self._column_filters_match(filters, layer_id):
+                continue
+            if not wants_reviews:
+                entries.append(LayerEntry(layer_id, None, None))
+                continue
+            if self._data_dir is None:
+                continue
+            layer = self.load(self._data_dir / f"{layer_id}{LAYER_FILE_SUFFIX}")
+            items = [i for i in layer.get("needs_review") or [] if isinstance(i, dict)]
+            if json_filters:
+                items = [i for i in items if item_matches(json_filters, i)]
+            if items:
+                entries.append(LayerEntry(layer_id, None, items))
+        return entries
+
+    @staticmethod
+    def _column_filters_match(filters: Sequence[Filter], layer_id: str) -> bool:
+        """File-backend column evaluation: the ID stem, and no owner to match."""
+        for f in filters:
+            if f.key == "layer_id":
+                if f.op == "eq" and layer_id != f.value:
+                    return False
+                if f.op == "in" and layer_id not in f.value:
+                    return False
+            elif f.key == "product_repo_id":
+                # A file-backed layer records no product_repo owner, so an
+                # owner filter matches nothing — same as list_layer_refs.
+                return False
+        return True
 
     def product_repo_id(self, layer_id: str) -> str | None:
         del layer_id

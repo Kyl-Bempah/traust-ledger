@@ -1409,6 +1409,39 @@
               "title": "Product Repo Id"
             },
             "description": "Only the layer of this product_repo"
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Allowlisted declarative filter, 'key:op:value' (repeatable). Keys: product_repo_id, layer_id (eq/in); merkle_epoch, updated_at (gte/lte, ISO-8601 with timezone); review_status, review_queue_reason (eq/in \u2014 layers with a matching needs_review item; matching items are embedded). Values are bound parameters; keys and operators are fixed by the server's filter registry.",
+              "title": "Filter"
+            },
+            "description": "Allowlisted declarative filter, 'key:op:value' (repeatable). Keys: product_repo_id, layer_id (eq/in); merkle_epoch, updated_at (gte/lte, ISO-8601 with timezone); review_status, review_queue_reason (eq/in \u2014 layers with a matching needs_review item; matching items are embedded). Values are bound parameters; keys and operators are fixed by the server's filter registry."
+          },
+          {
+            "name": "include_reviews",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Embed each layer's needs_review queue in the response (layers with empty queues are skipped)",
+              "default": false,
+              "title": "Include Reviews"
+            },
+            "description": "Embed each layer's needs_review queue in the response (layers with empty queues are skipped)"
           }
         ],
         "responses": {
@@ -2429,6 +2462,21 @@
               }
             ],
             "title": "Product Repo Id"
+          },
+          "needs_review": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Needs Review"
           }
         },
         "type": "object",
