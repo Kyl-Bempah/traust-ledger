@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import json
+from collections.abc import Callable, Sequence
 from copy import deepcopy
 from typing import TypeVar
 
-from sqlalchemy import insert, select, text, update
+from sqlalchemy import func, insert, select, text, update
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
 from traust_ledger._internal.migrations import enable_sqlite_foreign_keys, ledger_tables, upgrade
+from traust_ledger._internal.query import Filter, LayerEntry
 
 from .constants import EMPTY_LAYER
 from .errors import LayerConflictError, LayerNotInitializedError, LayerStorageError
@@ -19,6 +21,15 @@ from .records import LayerRecord, StoredLayerRecord
 from .validation import validate_layer
 
 T = TypeVar("T")
+
+#: Fixed operator→comparator mapping. Operators are registry-gated; values
+#: are bound by SQLAlchemy — request strings never become SQL text.
+_COLUMN_COMPARATORS = {
+    "eq": lambda column, value: column == value,
+    "in": lambda column, value: column.in_(value),
+    "gte": lambda column, value: column >= value,
+    "lte": lambda column, value: column <= value,
+}
 
 
 def _layer_id(key: LayerKey) -> str:
@@ -53,6 +64,54 @@ class DbBackend:
             statement = statement.where(layers.c.product_repo_id == product_repo_id)
         with self._engine.connect() as conn:
             return [(row.layer_id, row.product_repo_id) for row in conn.execute(statement)]
+
+    def query_layers(self, filters: Sequence[Filter], *, include_reviews: bool) -> list[LayerEntry]:
+        """Registry-driven listing: column filters push down as bound expressions.
+
+        SQL safety is structural: column objects come from the registry via
+        ``layers.c`` attribute lookup (never request strings), values arrive as
+        bound parameters, and operators map to fixed comparator callables.
+        The non-trivial-payload prefilter keeps empty queues ('[]', two
+        bytes) out of the scan, portable across PostgreSQL and SQLite.
+        """
+        from traust_ledger._internal.query import (
+            FILTER_REGISTRY,
+            ColumnFilterDef,
+            item_matches,
+            json_item_filters,
+        )
+
+        layers = self._tables.layers
+        json_filters = json_item_filters(filters)
+        wants_reviews = include_reviews or bool(json_filters)
+        columns = [layers.c.layer_id, layers.c.product_repo_id]
+        if wants_reviews:
+            columns.append(layers.c.needs_review_payload)
+        statement = select(*columns)
+        for f in filters:
+            definition = FILTER_REGISTRY[f.key]
+            if isinstance(definition, ColumnFilterDef):
+                column = getattr(layers.c, definition.column)
+                statement = statement.where(_COLUMN_COMPARATORS[f.op](column, f.value))
+        if wants_reviews:
+            statement = statement.where(func.length(layers.c.needs_review_payload) > 2)
+        statement = statement.order_by(layers.c.layer_id)
+        entries: list[LayerEntry] = []
+        with self._engine.connect() as conn:
+            for row in conn.execute(statement):
+                items: list | None = None
+                if wants_reviews:
+                    items = [
+                        i
+                        for i in json.loads(bytes(row.needs_review_payload))
+                        if isinstance(i, dict)
+                    ]
+                    if json_filters:
+                        items = [i for i in items if item_matches(json_filters, i)]
+                    if not items:
+                        continue
+                entries.append(LayerEntry(row.layer_id, row.product_repo_id, items))
+        return entries
 
     def has_layer(self, layer_id: str) -> bool:
         with self._engine.connect() as conn:

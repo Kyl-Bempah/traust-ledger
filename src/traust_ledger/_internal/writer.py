@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
@@ -144,23 +145,32 @@ class LedgerWriter:
         self.backend = backend or FileBackend()
         self._schema = None
         self._schema_loaded = False
+        self._schema_lock = threading.Lock()
 
     def _get_schema(self) -> dict | None:
-        """Load and cache the JSON schema if configured."""
-        if self._schema_loaded:
-            return self._schema
+        """Load and cache the JSON schema if configured.
 
-        self._schema_loaded = True
-        if self.schema_path is None:
-            return None
+        Locked: sync routes run in the Starlette threadpool, so the lazy
+        load can race. The flag is only set after the schema is assigned —
+        an unlocked check-then-set could publish ``_schema_loaded`` while
+        ``_schema`` is still ``None``, silently skipping validation.
+        """
+        with self._schema_lock:
+            if self._schema_loaded:
+                return self._schema
 
-        path = Path(self.schema_path)
-        try:
-            with path.open(encoding="utf-8") as f:
-                self._schema = json.load(f)
+            if self.schema_path is None:
+                self._schema_loaded = True
+                return None
+
+            path = Path(self.schema_path)
+            try:
+                with path.open(encoding="utf-8") as f:
+                    self._schema = json.load(f)
+            except (OSError, json.JSONDecodeError) as e:
+                raise ValueError(f"Failed to load schema from {path}: {e}") from e
+            self._schema_loaded = True
             return self._schema
-        except (OSError, json.JSONDecodeError) as e:
-            raise ValueError(f"Failed to load schema from {path}: {e}") from e
 
     def _validate_layer(self, layer: dict) -> None:
         """Validate layer against schema if configured."""

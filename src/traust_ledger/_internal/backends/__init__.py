@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Protocol, TypeVar
+
+from traust_ledger._internal.query import Filter, LayerEntry
 
 from .constants import (
     BACKEND_TYPE_DB,
@@ -42,6 +44,16 @@ class Backend(Protocol):
 
     def list_layer_refs(self, product_repo_id: str | None = None) -> list[tuple[str, str | None]]:
         """Return (layer_id, product_repo_id) pairs, optionally for one product_repo."""
+        ...
+
+    def query_layers(self, filters: Sequence[Filter], *, include_reviews: bool) -> list[LayerEntry]:
+        """Declarative layer listing driven by the filter registry.
+
+        Column filters push down as bound SQLAlchemy expressions; JSON-item
+        filters (and include_reviews) select layers with matching queue
+        entries and embed them. Entries with no matching reviews are omitted
+        whenever reviews were requested.
+        """
         ...
 
     def product_repo_id(self, layer_id: str) -> str | None:

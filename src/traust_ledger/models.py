@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 
 from traust_ledger.api.findings import FindingDisposition, FindingsSummary
 from traust_ledger.constants.domain import PRODUCT_REPO_ID_PATTERN
@@ -103,6 +103,16 @@ class FingerprintResponse(BaseModel):
 class LayerRef(BaseModel):
     layer_id: str
     product_repo_id: str | None = None
+    #: Present only when the listing requested review items (review_status /
+    #: include_reviews); the matching needs_review queue entries.
+    needs_review: list[dict[str, object]] | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_reviews(self, handler, _info):
+        data = handler(self)
+        if data.get("needs_review") is None:
+            del data["needs_review"]
+        return data
 
 
 class LayerListResponse(BaseModel):

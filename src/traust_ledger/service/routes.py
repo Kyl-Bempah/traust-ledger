@@ -9,9 +9,11 @@ from traust_contracts.v1.models.layer import LayerActor
 
 from traust_ledger._internal.backends.errors import LayerNotInitializedError
 from traust_ledger._internal.backends.validation import validate_layer
+from traust_ledger._internal.query import Filter, parse_filters
 from traust_ledger._internal.writer import LedgerWriter
 from traust_ledger.config import ServiceConfig
 from traust_ledger.constants.domain import PRODUCT_REPO_ID_PATTERN
+from traust_ledger.errors import ValidationError
 from traust_ledger.handlers.event_handler import submit_event
 from traust_ledger.handlers.events_handler import query_layer_events
 from traust_ledger.handlers.findings_handler import resolve_all_findings, resolve_findings
@@ -83,6 +85,16 @@ def _writer(request: Request) -> LedgerWriter:
     return request.app.state.writer
 
 
+# Route concurrency contract: every handler below that touches the
+# backend, writer, or does CPU-bound work (signing, fingerprints, JWT
+# crypto) is a plain `def` — Starlette runs sync endpoints in its
+# threadpool, so the event loop stays free to answer /healthz. Only the
+# trivially non-blocking handlers (healthz, whoami) stay `async def`.
+# This matters: the backend uses a synchronous SQLAlchemy engine, and a
+# single async handler doing sync work blocks the whole loop (observed:
+# liveness-probe kills under the sci-api layer fan-out).
+
+
 @router.get(ROUTE_HEALTHZ)
 async def healthz() -> HealthResponse:
     return HealthResponse(status=STATUS_HEALTHY)
@@ -105,7 +117,7 @@ async def healthz() -> HealthResponse:
         },
     },
 )
-async def post_event(
+def post_event(
     envelope: EventEnvelope,
     request: Request,
     actor: Annotated[LayerActor, Depends(resolve_actor)],
@@ -124,7 +136,7 @@ async def post_event(
         422: {"model": ErrorDetail, "description": "Invalid key, decision, or resolution rules"},
     },
 )
-async def resolve_review(
+def resolve_review(
     layer_id: str,
     body: ResolveRequest,
     request: Request,
@@ -156,7 +168,7 @@ async def resolve_review(
         },
     },
 )
-async def post_restatement(
+def post_restatement(
     layer_id: str,
     body: RestatementRequest,
     request: Request,
@@ -178,7 +190,7 @@ async def post_restatement(
 
 
 @router.post("/v1/ledger/layers/{layer_id}/initialize")
-async def post_initialize_layer(
+def post_initialize_layer(
     layer_id: str,
     body: InitializeRequest,
     request: Request,
@@ -209,7 +221,7 @@ async def post_initialize_layer(
         },
     },
 )
-async def get_layer(layer_id: str, request: Request) -> dict[str, object]:
+def get_layer(layer_id: str, request: Request) -> dict[str, object]:
     config = _config(request)
     return load_layer(layer_id, request.app.state.backend, config)
 
@@ -224,7 +236,7 @@ async def get_layer(layer_id: str, request: Request) -> dict[str, object]:
         404: {"model": ErrorDetail, "description": "Layer not found"},
     },
 )
-async def verify_layer_endpoint(
+def verify_layer_endpoint(
     layer_id: str,
     request: Request,
     check_signatures: bool = False,
@@ -246,7 +258,7 @@ async def verify_layer_endpoint(
         404: {"model": ErrorDetail, "description": "Layer not found"},
     },
 )
-async def get_findings(layer_id: str, request: Request) -> FindingsResponse:
+def get_findings(layer_id: str, request: Request) -> FindingsResponse:
     config = _config(request)
     return resolve_findings(layer_id, request.app.state.backend, config)
 
@@ -262,7 +274,7 @@ async def get_findings(layer_id: str, request: Request) -> FindingsResponse:
     },
     summary="Alias for /findings — baseline enrichment is a client concern",
 )
-async def get_cumulative(layer_id: str, request: Request) -> FindingsResponse:
+def get_cumulative(layer_id: str, request: Request) -> FindingsResponse:
     config = _config(request)
     return resolve_findings(layer_id, request.app.state.backend, config)
 
@@ -277,7 +289,7 @@ async def get_cumulative(layer_id: str, request: Request) -> FindingsResponse:
         404: {"model": ErrorDetail, "description": "Layer not found"},
     },
 )
-async def get_layer_events(
+def get_layer_events(
     layer_id: str,
     request: Request,
     finding_ref: str | None = Query(None, description="Filter to a specific finding"),
@@ -308,7 +320,7 @@ async def get_layer_events(
         },
     },
 )
-async def get_all_findings(
+def get_all_findings(
     request: Request,
     cursor: str | None = Query(None, description="Resume after this layer_id"),
     limit: int = Query(100, ge=1, le=1000, description="Max layers per page"),
@@ -335,7 +347,7 @@ async def get_all_findings(
         422: {"model": ErrorDetail, "description": "Validation error or identity rule violation"},
     },
 )
-async def post_submit(
+def post_submit(
     layer_id: str,
     body: BatchSubmitRequest,
     request: Request,
@@ -349,7 +361,7 @@ async def post_submit(
     response_model=FingerprintResponse,
     dependencies=[Depends(require_identity)],
 )
-async def post_fingerprint(body: FingerprintRequest) -> FingerprintResponse:
+def post_fingerprint(body: FingerprintRequest) -> FingerprintResponse:
     return compute_fingerprints(body)
 
 
@@ -362,17 +374,53 @@ async def post_fingerprint(body: FingerprintRequest) -> FingerprintResponse:
         404: {"model": ErrorDetail, "description": "No layer belongs to the product_repo"},
     },
 )
-async def list_layers(
+def list_layers(
     request: Request,
     product_repo_id: str | None = Query(
         None, pattern=PRODUCT_REPO_ID_PATTERN, description="Only the layer of this product_repo"
     ),
+    filter: Annotated[
+        list[str] | None,
+        Query(
+            alias="filter",
+            description=(
+                "Allowlisted declarative filter, 'key:op:value' (repeatable). "
+                "Keys: product_repo_id, layer_id (eq/in); merkle_epoch, updated_at "
+                "(gte/lte, ISO-8601 with timezone); review_status, "
+                "review_queue_reason (eq/in — layers with a matching needs_review "
+                "item; matching items are embedded). Values are bound parameters; "
+                "keys and operators are fixed by the server's filter registry."
+            ),
+        ),
+    ] = None,
+    include_reviews: bool = Query(
+        False,
+        description=(
+            "Embed each layer's needs_review queue in the response "
+            "(layers with empty queues are skipped)"
+        ),
+    ),
 ) -> LayerListResponse:
-    refs = request.app.state.backend.list_layer_refs(product_repo_id)
-    if product_repo_id is not None and not refs:
+    try:
+        filters = parse_filters(filter or [])
+    except ValueError as exc:
+        raise ValidationError(detail=str(exc)) from exc
+    if product_repo_id is not None:
+        # Legacy single-owner param (FindLayer wire compatibility): the same
+        # registry filter, expressed directly.
+        filters.append(Filter(key="product_repo_id", op="eq", value=product_repo_id))
+    entries = request.app.state.backend.query_layers(filters, include_reviews=include_reviews)
+    if product_repo_id is not None and not entries and not filter and not include_reviews:
         raise ProductRepoLayerNotFoundError(product_repo_id=product_repo_id)
     return LayerListResponse(
-        layers=[LayerRef(layer_id=layer_id, product_repo_id=owner) for layer_id, owner in refs]
+        layers=[
+            LayerRef(
+                layer_id=entry.layer_id,
+                product_repo_id=entry.product_repo_id,
+                needs_review=entry.needs_review,
+            )
+            for entry in entries
+        ]
     )
 
 
@@ -386,7 +434,7 @@ async def list_layers(
         500: {"model": ErrorDetail, "description": "Signing failed"},
     },
 )
-async def sign_layer_endpoint(
+def sign_layer_endpoint(
     layer_id: str,
     request: Request,
     rekor: bool = Query(False, description="Upload signature to transparency log"),
@@ -417,7 +465,7 @@ async def sign_layer_endpoint(
         500: {"model": ErrorDetail, "description": "Signing failed"},
     },
 )
-async def stamp_layer_endpoint(
+def stamp_layer_endpoint(
     layer_id: str,
     body: StampRequest,
     request: Request,
