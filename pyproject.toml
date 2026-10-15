@@ -39,7 +39,7 @@ cli = ["httpx2"]
 ledger = "traust_ledger.cli.main:main"
 
 [tool.uv.sources]
-traust-contracts = { git = "https://github.com/traust-security/traust-contracts.git", rev = "0f3298b00d3c84a2f0e56bd23d4a5847ff1c4040" }
+traust-contracts = { git = "https://github.com/traust-security/traust-contracts.git", rev = "cb8bba8196f0d1203177cf7d920036a655dade0a" }
 
 [build-system]
 requires = ["hatchling"]
