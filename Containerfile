@@ -106,6 +106,9 @@ LABEL org.opencontainers.image.source="https://github.com/traust-security/traust
 # cosign lives in the image so event-signing can call it without an
 # external sidecar; the key itself never ships here.
 COPY --from=cosign /usr/bin/cosign /usr/local/bin/cosign
+# Red Hat certification policy (preflight HasLicense): terms and
+# conditions must be present as text file(s) under /licenses.
+COPY --chown=65532:65532 LICENSE /licenses/LICENSE
 
 # --chown: the runtime base image runs as a non-root UID (65532) and the
 # rewire RUN below executes as that user, so it must own the copied files.
