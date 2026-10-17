@@ -2,6 +2,14 @@
 
 All notable changes to traust-ledger are documented here.
 
+## [0.11.3]
+
+### Changed
+
+- Pins traust-contracts 0.60.0 (`review_surfaces` on deprioritized threats;
+  vuln-findings enforces the full-scan `out_of_scope` rule). No ledger
+  schema or wire change.
+
 ## [0.11.2]
 
 ### Fixed
