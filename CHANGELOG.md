@@ -2,6 +2,23 @@
 
 All notable changes to traust-ledger are documented here.
 
+## [0.11.3]
+
+### Changed
+
+- Pins traust-contracts 0.60.0 (`review_surfaces` on deprioritized threats;
+  vuln-findings enforces the full-scan `out_of_scope` rule). No ledger
+  schema or wire change.
+
+## [0.11.2]
+
+### Fixed
+
+- **Container image now ships `/licenses/LICENSE`.** The runtime stage never
+  copied the repository's Apache-2.0 text into the image, so Red Hat
+  certification preflight failed its `HasLicense` check. The license file is
+  now installed at `/licenses/LICENSE` (readable by the non-root runtime UID).
+
 ## [0.11.1]
 
 ### Changed

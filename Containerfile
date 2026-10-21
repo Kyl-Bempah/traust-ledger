@@ -6,7 +6,7 @@
 # built here is copied wholesale into the runtime, and native-extension .so
 # files are ABI-pinned per minor while the venv's script shebangs hardcode
 # the builder's interpreter path.
-FROM registry.access.redhat.com/hi/python:3.12-builder@sha256:d424478806aa5d07da358428c00431de083e7a5c6ab537d73c9b3f09f28330eb AS builder
+FROM registry.access.redhat.com/hi/python:3.12-builder@sha256:9d42be84f9d26fdfd654a0c24f4f222544c22af399871c5ab6a1af1f5f6d9aa9 AS builder
 
 ARG UV_VERSION=0.7
 
@@ -74,13 +74,13 @@ RUN uv pip install "psycopg[binary]>=${PSYCOPG_VERSION}"
 # ── cosign source ───────────────────────────────────────────────────
 # Take the cosign binary from a digest-pinned hardened image rather than
 # downloading a release at build time: no network fetch in the build.
-FROM registry.access.redhat.com/hi/cosign:latest@sha256:18bd54867ddcb217f045e3ff97135c373864ea5bdb0f4bb97db90f645ac0e07d AS cosign
+FROM registry.access.redhat.com/hi/cosign:latest@sha256:5d879753ac0d94169b29b1d9abd7fd52bb635857dbb904f4c472c054282a3189 AS cosign
 
 # ── Runtime stage ───────────────────────────────────────────────────
 # Minimal hardened Python runtime. Runs as a non-root user (UID 1001) by
 # default and ships no package manager, so nothing is installed here.
 # Python minor must match the builder stage above (see note there).
-FROM registry.access.redhat.com/hi/python:3.12@sha256:f24b7d72c1a767f53f8d70aaeb8da925fe325cc8fbcac5071cca21f71a95126c AS runtime
+FROM registry.access.redhat.com/hi/python:3.12@sha256:d108d323fa6d93a3a8e8c832858b07a1da06dacaaeeb3bae0a96a3d508176961 AS runtime
 
 # OCI labels. VERSION and SOURCE_REVISION are supplied by the build.
 ARG SOURCE_REVISION=unknown
@@ -106,6 +106,9 @@ LABEL org.opencontainers.image.source="https://github.com/traust-security/traust
 # cosign lives in the image so event-signing can call it without an
 # external sidecar; the key itself never ships here.
 COPY --from=cosign /usr/bin/cosign /usr/local/bin/cosign
+# Red Hat certification policy (preflight HasLicense): terms and
+# conditions must be present as text file(s) under /licenses.
+COPY --chown=65532:65532 LICENSE /licenses/LICENSE
 
 # --chown: the runtime base image runs as a non-root UID (65532) and the
 # rewire RUN below executes as that user, so it must own the copied files.
