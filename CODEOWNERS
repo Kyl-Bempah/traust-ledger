@@ -7,11 +7,9 @@
 /src/traust_ledger/ @traust-security/traust-admins
 /tests/ @traust-security/traust-admins
 
-/.gitlab-ci.yml @traust-security/traust-admins
 /.githooks/ @traust-security/traust-admins
 /CODEOWNERS @traust-security/traust-admins
 /ci/gates.py @traust-security/traust-admins
-/release.py @traust-security/traust-admins
 /Makefile @traust-security/traust-admins
 
 * @traust-security/traust-admins

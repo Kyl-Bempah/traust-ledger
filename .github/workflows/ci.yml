@@ -21,7 +21,7 @@ jobs:
         with:
           enable-cache: true
           python-version: "3.12"
-      - run: uv sync --frozen --extra service --extra cli
+      - run: uv sync --frozen
       - run: make lint
 
   test:
@@ -36,5 +36,6 @@ jobs:
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
-      - run: uv sync --frozen --extra service --extra cli
+      - uses: sigstore/cosign-installer@v4.1.2   # cosign 3: the signing tests use real keypairs
+      - run: uv sync --frozen
       - run: make test

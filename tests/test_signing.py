@@ -1,32 +1,41 @@
 #!/usr/bin/env python3
-"""Tests for traust_ledger._internal.integrity.signing (CosignBackend) and
-traust_ledger._internal.integrity.ledger.verify_merkle_signature."""
+"""Tests for traust_ledger.integrity.signing (CosignBackend) and
+traust_ledger.integrity.ledger.verify_merkle_signature."""
 
 from __future__ import annotations
 
-import os
+import hashlib
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from traust_ledger._internal.events._core import compute_event_id
-from traust_ledger._internal.integrity import (
+from traust_ledger.integrity import (
     Severity,
     stamp_merkle_metadata,
     verify_merkle_signature,
 )
-from traust_ledger._internal.integrity.ledger import (
+from traust_ledger.integrity.ledger import (
     SIGNATURE_FORMAT_CURRENT,
     merkle_root_payload,
     merkle_signature_payload,
 )
-from traust_ledger._internal.integrity.signing import CosignBackend, SignResult, VerifyResult
+from traust_ledger.integrity.signing import CosignBackend, SignResult, VerifyResult
+
+
+def compute_event_id(
+    source_ref: str, finding_ref: str, validity: str | None, resolution: str | None
+) -> str:
+    """Sample event ids, same formula the ledger used (sha256 of the joined fields)."""
+    return hashlib.sha256(
+        f"{source_ref}|{finding_ref}|{validity or ''}|{resolution or ''}".encode()
+    ).hexdigest()
+
 
 ROOT = "a" * 64
 SIG = "dGVzdC1zaWduYXR1cmU="
 F1 = "TEST_WIDGET-abcdef0-001"
 
-_SIGNING_MOD = "traust_ledger._internal.integrity.signing"
+_SIGNING_MOD = "traust_ledger.integrity.signing"
 
 
 def _event():
@@ -172,11 +181,10 @@ class TestCosignBackend(unittest.TestCase):
 
 
 class TestVerifyMerkleSignature(unittest.TestCase):
-    @mock.patch.dict(os.environ, {"LAAS_SIGNING_REQUIRED": "1"})
     def test_absent_signature_errors_when_required(self):
         # v0.202.0 (self-audit -006): deleting the signature must never be
         # a downgrade path — required mode fails closed with an ERROR
-        findings = verify_merkle_signature(_layer(signature=None))
+        findings = verify_merkle_signature(_layer(signature=None), required=True)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].severity, Severity.ERROR)
         self.assertIn("absent", findings[0].message)
@@ -263,7 +271,7 @@ def test_format_3_binds_the_report_digest():
     """The gap format 2 left: whoever could write the layer could repoint it at a
     substituted report by rewriting audit_report_sha256, because the digest sat
     outside the signature. Provenance, not tamper-evidence."""
-    from traust_ledger._internal.integrity.ledger import merkle_signature_payload
+    from traust_ledger.integrity.ledger import merkle_signature_payload
 
     meta = {
         "merkle_root": "ab" * 32,
@@ -281,7 +289,7 @@ def test_format_3_binds_the_report_digest():
 
 
 def test_format_3_differs_from_format_2_on_the_same_metadata():
-    from traust_ledger._internal.integrity.ledger import merkle_signature_payload
+    from traust_ledger.integrity.ledger import merkle_signature_payload
 
     meta = {
         "merkle_root": "ab" * 32,
@@ -296,7 +304,7 @@ def test_format_3_differs_from_format_2_on_the_same_metadata():
 def test_absent_digest_is_signed_as_a_distinct_value():
     """A layer whose report could not be resolved signs None, not 'omit the key' —
     so backfilling the digest later invalidates the signature instead of passing."""
-    from traust_ledger._internal.integrity.ledger import merkle_signature_payload
+    from traust_ledger.integrity.ledger import merkle_signature_payload
 
     without = {"merkle_root": "ab" * 32, "leaf_format": 2, "merkle_size": 1}
     with_digest = {**without, "audit_report_sha256": "cd" * 32}
@@ -312,7 +320,7 @@ def test_new_signatures_record_the_current_format(tmp_path, monkeypatch):
     so it now checks the property that matters: the payload actually changes with the
     format, i.e. the number is load-bearing rather than decorative.
     """
-    from traust_ledger._internal.integrity.ledger import (
+    from traust_ledger.integrity.ledger import (
         SIGNATURE_FORMAT_CURRENT,
         merkle_signature_payload,
     )
@@ -329,7 +337,7 @@ def test_format_2_still_verifies_during_the_migration():
     verify without complaint, against the payload they were actually signed over."""
     from unittest.mock import Mock
 
-    from traust_ledger._internal.integrity.ledger import merkle_signature_payload
+    from traust_ledger.integrity.ledger import merkle_signature_payload
 
     backend = Mock()
     backend.method_name = "keypair"
@@ -346,49 +354,3 @@ def test_format_2_still_verifies_during_the_migration():
     backend.verify.assert_called_once_with(
         merkle_signature_payload(layer["metadata"], fmt=2), SIG, "/tmp/pub.pem"
     )
-
-
-# --------------------------------------------------------------------------
-# Env-name compatibility. 0.11.0 renamed the HARNESS_SIGNING_* family to
-# LAAS_SIGNING_* with no alias, which is fail-OPEN: a caller exporting the old
-# name configured no signer and wrote unsigned layers, while the guard meant to
-# catch that (HARNESS_SIGNING_REQUIRED=1) stopped being read by the same rename.
-# --------------------------------------------------------------------------
-
-
-def test_legacy_harness_prefix_still_configures_the_signer(monkeypatch):
-    from traust_ledger._internal.integrity.signing import SigningConfig
-
-    monkeypatch.delenv("LAAS_SIGNING_KEY_PATH", raising=False)
-    monkeypatch.setenv("HARNESS_SIGNING_KEY_PATH", "/keys/cosign.key")
-    assert SigningConfig.from_env().key_path == "/keys/cosign.key"
-
-
-def test_current_prefix_wins_when_both_are_set(monkeypatch):
-    from traust_ledger._internal.integrity.signing import SigningConfig
-
-    monkeypatch.setenv("LAAS_SIGNING_KEY_PATH", "/new.key")
-    monkeypatch.setenv("HARNESS_SIGNING_KEY_PATH", "/old.key")
-    assert SigningConfig.from_env().key_path == "/new.key"
-
-
-def test_stripped_signature_errors_under_either_required_flag(monkeypatch):
-    """Deleting a signature must never be a downgrade path, under either name."""
-    from traust_ledger._internal.integrity.ledger import verify_merkle_signature
-
-    layer = {"metadata": {"merkle_root": "a" * 64}}
-    for var in ("LAAS_SIGNING_REQUIRED", "HARNESS_SIGNING_REQUIRED"):
-        monkeypatch.delenv("LAAS_SIGNING_REQUIRED", raising=False)
-        monkeypatch.delenv("HARNESS_SIGNING_REQUIRED", raising=False)
-        monkeypatch.setenv(var, "1")
-        findings = verify_merkle_signature(layer)
-        assert findings, f"{var}=1 must make an absent signature an error"
-        assert "absent" in findings[0].message
-
-
-def test_unset_required_flag_stays_quiet(monkeypatch):
-    from traust_ledger._internal.integrity.ledger import verify_merkle_signature
-
-    monkeypatch.delenv("LAAS_SIGNING_REQUIRED", raising=False)
-    monkeypatch.delenv("HARNESS_SIGNING_REQUIRED", raising=False)
-    assert verify_merkle_signature({"metadata": {"merkle_root": "a" * 64}}) == []
