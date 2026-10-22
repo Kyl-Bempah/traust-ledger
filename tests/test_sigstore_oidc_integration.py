@@ -21,7 +21,7 @@ import unittest
 
 import pytest
 
-from traust_ledger._internal.integrity.signing import SigningConfig, SigstoreOIDCBackend
+from traust_ledger.integrity.signing import SigningConfig, SigstoreOIDCBackend
 
 
 def _has_oidc_credentials() -> bool:

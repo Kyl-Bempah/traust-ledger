@@ -6,7 +6,7 @@ import copy
 
 import pytest
 
-from traust_ledger._internal.integrity import (
+from traust_ledger.integrity import (
     Severity,
     stamp_merkle_metadata,
     verify_merkle_integrity,

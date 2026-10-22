@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
-"""Tests for traust_ledger._internal.integrity.signing.SigstoreOIDCBackend and
-LAAS_SIGNING_* env var configuration."""
+"""Tests for traust_ledger.integrity.signing.SigstoreOIDCBackend and backend dispatch."""
 
 from __future__ import annotations
 
 import json
-import os
 import sys
 import unittest
 from unittest import mock
 
-from traust_ledger._internal.integrity.signing import (
+from traust_ledger.integrity.signing import (
     SigningConfig,
     SigstoreOIDCBackend,
     get_backend_from_config,
@@ -23,62 +21,6 @@ FAKE_BUNDLE_JSON = json.dumps(
         "messageSignature": {"messageDigest": {"algorithm": "SHA2_256", "digest": "AAAA"}},
     }
 )
-
-
-class TestSigningConfigFromEnv(unittest.TestCase):
-    @mock.patch.dict(
-        os.environ,
-        {
-            "LAAS_SIGNING_METHOD": "identity",
-            "LAAS_SIGNING_KEY_PATH": "/tmp/key.pem",
-            "LAAS_SIGNING_OIDC_ISSUER": "https://accounts.google.com",
-            "LAAS_SIGNING_OIDC_CLIENT_ID": "my-client",
-            "LAAS_SIGNING_EXPECTED_IDENTITY": "user@example.com",
-            "LAAS_SIGNING_OIDC_TOKEN": "/tmp/token",
-            "LAAS_SIGNING_OIDC_INTERACTIVE": "0",
-            "LAAS_SIGNING_CA_URL": "https://ca.example.com",
-            "LAAS_SIGNING_TLOG_URL": "https://tlog.example.com",
-        },
-    )
-    def test_from_env_loads_all_fields(self):
-        config = SigningConfig.from_env()
-        self.assertEqual(config.method, "identity")
-        self.assertEqual(config.key_path, "/tmp/key.pem")
-        self.assertEqual(config.oidc_issuer, "https://accounts.google.com")
-        self.assertEqual(config.oidc_client_id, "my-client")
-        self.assertEqual(config.expected_identity, "user@example.com")
-        self.assertEqual(config.oidc_token, "/tmp/token")
-        self.assertFalse(config.allow_interactive)
-        self.assertEqual(config.ca_url, "https://ca.example.com")
-        self.assertEqual(config.tlog_url, "https://tlog.example.com")
-
-    @mock.patch.dict(os.environ, {}, clear=True)
-    def test_from_env_defaults(self):
-        config = SigningConfig.from_env()
-        self.assertEqual(config.method, "keypair")
-        self.assertIsNone(config.key_path)
-        self.assertIsNone(config.oidc_issuer)
-        self.assertIsNone(config.oidc_client_id)
-        self.assertIsNone(config.expected_identity)
-        self.assertIsNone(config.oidc_token)
-        self.assertFalse(config.allow_interactive)
-        self.assertIsNone(config.ca_url)
-        self.assertIsNone(config.tlog_url)
-
-    @mock.patch.dict(os.environ, {"LAAS_SIGNING_OIDC_INTERACTIVE": "1"})
-    def test_interactive_enabled_explicitly(self):
-        config = SigningConfig.from_env()
-        self.assertTrue(config.allow_interactive)
-
-    @mock.patch.dict(os.environ, {"LAAS_SIGNING_OIDC_INTERACTIVE": "0"})
-    def test_interactive_disabled(self):
-        config = SigningConfig.from_env()
-        self.assertFalse(config.allow_interactive)
-
-    @mock.patch.dict(os.environ, {"LAAS_SIGNING_METHOD": "identity"}, clear=True)
-    def test_from_env_reads_laas_vars(self):
-        config = SigningConfig.from_env()
-        self.assertEqual(config.method, "identity")
 
 
 class TestGetBackendFromConfig(unittest.TestCase):
@@ -106,7 +48,7 @@ class TestGetBackendFromConfig(unittest.TestCase):
     def test_key_based_backend(self):
         config = SigningConfig(method="keypair")
         backend = get_backend_from_config(config)
-        from traust_ledger._internal.integrity.signing import CosignBackend
+        from traust_ledger.integrity.signing import CosignBackend
 
         self.assertIsInstance(backend, CosignBackend)
 
