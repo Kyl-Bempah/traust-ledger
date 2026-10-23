@@ -36,6 +36,8 @@ Every function reads and stamps one shape:
 | `sign_if_configured(layer, config)` | signs the stamped metadata when `config` has a key (keypair) or token (identity); else `unconfigured`. Never silent on failure |
 | `stamp_and_sign(layer, config)` | both, in the right order |
 
+A writer that appends from a frontier sets `merkle_root` and `merkle_size` itself (`frontier_root`) and calls `sign_if_configured` on a document with only the metadata: signing never reads events. The frontier is the writer's to store (traust-core keeps it on the layer row); it isn't part of the document.
+
 The signature (format 4) covers a digest of the root, leaf format, epoch, size, pre-epoch checkpoint and, for legacy layers, the claim-hash, report and artifact digests, so a signature can't be moved to another layer or replayed after a rollback.
 
 `SigningConfig` is built by the caller from its own configuration; the library reads no environment variables.
@@ -58,4 +60,4 @@ The signature (format 4) covers a digest of the root, leaf format, epoch, size, 
 
 ## Historical layers
 
-Layers written before traust-core (file and database layers, leaf format 1 or 2, signature formats 1 to 4, restatement chains) verify with the same two functions. Nothing in a signed layer is rewritten.
+Layers written before traust-core (file layers, the old ledger service's database including SCI's, leaf format 1 or 2, signature formats 1 to 4, restatement chains) verify with the same two functions. They're kept as signed artifacts, never loaded into traust-core's ledger tables, which have no place for their legacy metadata. Nothing in a signed layer is rewritten.

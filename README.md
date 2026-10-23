@@ -1,8 +1,8 @@
 # traust-ledger
 
-The ledger's integrity primitives, as a library: canonical event bytes, Merkle trees with inclusion and consistency proofs, signing and verification of a layer document. Pure functions; no database, no HTTP, no configuration of its own.
+The ledger's integrity primitives, as a library: canonical event bytes, Merkle trees with inclusion and consistency proofs and appends from a stored frontier, signing and verification of a layer document. Pure functions; no database, no HTTP, no configuration of its own.
 
-A **layer** is an append-only, signed sequence of events: never edited, only appended to. traust-core's `LedgerService` stores layers and events (one event per recorded decision) and calls this library to stamp, sign and verify them. Everyone else reaches the ledger through the platform API.
+A **layer** is an append-only, signed sequence of events: never edited, only appended to. traust-core's `LedgerService` stores layers and events (one event per recorded decision) and calls this library to grow, sign and verify them. Everyone else reaches the ledger through the platform API.
 
 ## Use
 

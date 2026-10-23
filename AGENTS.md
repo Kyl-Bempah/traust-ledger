@@ -12,7 +12,7 @@ Python 3.11+ library (`traust_ledger.integrity`): the ledger's integrity primiti
 
 | Module | Does |
 |---|---|
-| `integrity/merkle.py` | canonical event bytes, RFC 6962-style tree, inclusion and consistency proofs |
+| `integrity/merkle.py` | canonical event bytes, RFC 6962-style tree, inclusion and consistency proofs, appends from a frontier |
 | `integrity/signing.py` | `SigningConfig`; cosign (keypair) and Sigstore (identity) backends |
 | `integrity/ledger.py` | stamp, sign and verify a layer document; signature payload formats |
 | `integrity/restatements.py` | restatement chain replay for verifying signature-bound metadata |

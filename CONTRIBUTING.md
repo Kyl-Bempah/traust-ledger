@@ -29,7 +29,7 @@ feat(ledger)!: signature format 5          ← breaking change
 | `pre-commit` | ruff lint on staged `.py` | <1s |
 | `pre-push` | full lint + unit tests | ~10s |
 
-Bypass: `--no-verify` on commit or push. CI still enforces.
+Don't bypass the hooks (`--no-verify`): fix what they find. CI enforces the same checks.
 
 ## CI
 
