@@ -7,7 +7,7 @@ help:
 	@echo "  make hooks          — git config core.hooksPath .githooks"
 	@echo "  make lint           — ruff check + format --check"
 	@echo "  make lint-fix       — ruff check --fix + format"
-	@echo "  make test           — pytest (cosign on PATH runs the signing tests)"
+	@echo "  make test           — pytest, parallel via pytest-xdist (cosign on PATH runs the signing tests)"
 	@echo "  make coverage       — pytest with terminal coverage report"
 	@echo "  make coverage-html  — coverage report + htmlcov/"
 
@@ -29,7 +29,7 @@ lint-fix:
 	uv run ruff format .
 
 test:
-	uv run pytest tests/ -q
+	uv run pytest tests/ -q -n auto
 
 coverage:
 	uv run pytest tests/ --cov=traust_ledger --cov-report=term-missing -q
