@@ -24,6 +24,10 @@ Every function reads and stamps one shape:
 - The tree is RFC 6962-style (`0x00` leaf / `0x01` node prefixes), with inclusion and consistency proofs.
 - `merkle_epoch > 0` pins events before the epoch with `pre_merkle_checkpoint` (a digest of them).
 
+### Appending without rereading
+
+`extend_frontier(frontier, size, entry)` appends one leaf to a tree from its frontier: the roots of the perfect subtrees covering its leaves, largest first, one per set bit of the size (at most log2(size) hashes). `frontier_root(frontier)` is the same root `compute_root` gives over every leaf; `compute_frontier(entries)` builds the frontier of an existing tree once. A writer that keeps the frontier appends in O(log n) and never reads earlier leaves, so an edit to a stored event can't be folded into the next root: it stays a mismatch for verification to find.
+
 ## Stamping and signing
 
 | Function | Does |
