@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 
 __all__ = [
     "LEAF_FORMAT_CURRENT",
@@ -59,6 +60,41 @@ def _mth_from_leaf_hashes(leaf_hashes: list[bytes]) -> bytes:
         _mth_from_leaf_hashes(leaf_hashes[:k]),
         _mth_from_leaf_hashes(leaf_hashes[k:]),
     )
+
+
+def extend_frontier(frontier: Sequence[bytes], size: int, entry: bytes) -> tuple[bytes, ...]:
+    """The frontier after appending `entry` to a tree of `size` leaves.
+
+    A frontier is the roots of the perfect subtrees covering the leaves, largest first: one per
+    set bit of the size, so at most log2(size) hashes. Appending costs O(log n) and never reads
+    the earlier leaves.
+    """
+    if len(frontier) != size.bit_count():
+        raise ValueError(f"a frontier of {len(frontier)} hashes can't cover {size} leaves")
+    out, node, n = list(frontier), leaf_hash(entry), size
+    while n & 1:
+        node = node_hash(out.pop(), node)
+        n >>= 1
+    out.append(node)
+    return tuple(out)
+
+
+def frontier_root(frontier: Sequence[bytes]) -> bytes:
+    """The tree's root from its frontier: equal to compute_root over the same leaves."""
+    if not frontier:
+        return hashlib.sha256(b"").digest()
+    root = frontier[-1]
+    for subtree in reversed(frontier[:-1]):
+        root = node_hash(subtree, root)
+    return root
+
+
+def compute_frontier(entries: Sequence[bytes]) -> tuple[bytes, ...]:
+    """The frontier of a whole tree, e.g. to start appending to an existing layer."""
+    frontier: tuple[bytes, ...] = ()
+    for size, entry in enumerate(entries):
+        frontier = extend_frontier(frontier, size, entry)
+    return frontier
 
 
 def compute_root(entries: list[bytes]) -> bytes:
