@@ -33,7 +33,9 @@ Don't bypass the hooks (`--no-verify`): fix what they find. CI enforces the same
 
 ## CI
 
-Pull requests and pushes to `development`: lint and tests (Python 3.11 and 3.12), with cosign installed.
+Pull requests and pushes to `development`: lint, tests (Python 3.11 and 3.12) with cosign
+installed, and — on pull requests — the conventional-commit check over the PR's commits.
+The hook is local and bypassable; CI is the gate.
 
 ## Downstream pin
 
