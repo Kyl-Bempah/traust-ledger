@@ -1,4 +1,4 @@
-"""cosign v3 bundle-format signing (ledger-integrity-remediation-plan P4).
+"""cosign v3 bundle-format signing.
 
 cosign v3 changed the sign-blob contract: --output-signature hard-fails and the
 signature arrives inside a Sigstore bundle. Critically, without

@@ -188,10 +188,9 @@ def sign_if_configured(
 
     The write-path counterpart to `stamp_merkle_metadata`. Every writer stamps a
     Merkle root; until this existed, nothing signed one, because signing lived
-    only in the `sign_merkle_root.py` CLI and no write path invoked it. The
-    measured result was 0 of 22,206 corpus layers signed
-    (ledger-integrity-remediation-plan §2.4) — an unsigned root detects an
-    accident but not an adversary, who can simply restamp.
+    only in a separate CLI and no write path invoked it — so no stored layer
+    carried a signature. An unsigned root detects an accident but not an
+    adversary, who can simply restamp.
 
     Call AFTER `stamp_merkle_metadata`, since the signature covers the stamped
     metadata (root + leaf_format + epoch + size + pre-epoch checkpoint) via
@@ -527,7 +526,7 @@ def merkle_signature_payload(meta: dict, fmt: int = SIGNATURE_FORMAT_CURRENT) ->
         # verified after the move. That is acceptable while git still holds the
         # original and unacceptable as a basis for deleting it, which is the
         # entire point of the migration. Binding the map, not the files, keeps
-        # this one field per layer instead of ~46,000 new ones.
+        # this one field per layer instead of one per artifact.
         arts = meta.get("artifact_digests")
         doc["artifact_digests_digest"] = (
             hashlib.sha256(
@@ -628,9 +627,9 @@ def verify_merkle_signature(
         # sibling artifacts' digests are outside it.
         payload = merkle_signature_payload(meta, fmt=3)
     elif sig_format == 2:
-        # Accepted without complaint during the format-3 migration: 8,906 layers
-        # carry format 2, and warning on each would drown the signal it is meant
-        # to carry. Format 2 binds the root, its interpretation and the claim
+        # Accepted without complaint during the format-3 migration: layers signed
+        # before it carry format 2, and warning on each would drown the signal it
+        # is meant to carry. Format 2 binds the root, its interpretation and the claim
         # hashes — only audit_report_sha256 is outside it.
         payload = merkle_signature_payload(meta, fmt=2)
     elif sig_format == 1:

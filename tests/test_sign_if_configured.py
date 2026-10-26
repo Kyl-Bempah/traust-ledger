@@ -1,8 +1,7 @@
 """Write-path signing: sign_if_configured / stamp_and_sign.
 
-Wired 2026-08-12 per ledger-integrity-remediation-plan P4. Until then nothing
-in any write path invoked the signer — signing existed only in the
-sign_merkle_root.py CLI — so 0 of 22,206 corpus layers were signed.
+Until this was wired, nothing in any write path invoked the signer — signing
+existed only in a separate CLI — so no stored layer carried a signature.
 
 These tests pin the behaviour that matters BEFORE a key is provisioned: an
 unconfigured signer is a silent no-op (so wiring is safe), and a configured
