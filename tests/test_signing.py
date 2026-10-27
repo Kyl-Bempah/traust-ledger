@@ -333,8 +333,8 @@ def test_new_signatures_record_the_current_format(tmp_path, monkeypatch):
 
 
 def test_format_2_still_verifies_during_the_migration():
-    """8,906 layers carry format 2 until the re-sign pass completes; they must
-    verify without complaint, against the payload they were actually signed over."""
+    """Layers signed under format 2 must keep verifying without complaint,
+    against the payload they were actually signed over."""
     from unittest.mock import Mock
 
     from traust_ledger.integrity.ledger import merkle_signature_payload

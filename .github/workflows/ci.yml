@@ -1,5 +1,5 @@
-# Lint and unit tests on every PR, in the merge queue, and after each merge to development
-# or main. Mirrors the Makefile (`make lint`, `make test`).
+# Lint, conventional-commit subjects and unit tests on every PR, in the merge queue,
+# and after each merge to development or main. Mirrors the Makefile (`make lint`, `make test`).
 name: CI
 
 on:
@@ -23,6 +23,19 @@ jobs:
           python-version: "3.12"
       - run: uv sync --frozen
       - run: make lint
+
+  commits:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # gates.py range needs both endpoints in history
+      - name: Conventional commit subjects
+        run: >-
+          python3 ci/gates.py range
+          ${{ github.event.pull_request.base.sha }}
+          ${{ github.event.pull_request.head.sha }}
 
   test:
     runs-on: ubuntu-latest
